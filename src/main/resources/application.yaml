@@ -1,0 +1,70 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: food-bank-backend
+
+  # JDK 21 虚拟线程：提升调度系统并发性能
+  threads:
+    virtual:
+      enabled: true
+
+  # MySQL 8.4 连接配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/food_bank?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+
+  # Redis 7.4 连接配置
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: root
+      database: 0
+      lettuce:
+        pool:
+          max-active: 10
+          max-idle: 5
+
+  # RabbitMQ 4.0 连接配置
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+
+# MyBatis-Plus 配置
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: auto
+
+# 自定义调度算法权重参数
+dispatch:
+  strategy:
+    mode: NORMAL
+    weights:
+      distance: 0.8  # 距离权重
+      stock: 0.1     # 物资库存权重
+      urgency: 0.1   # 紧急程度权重
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs # 原始 JSON 格式文档路径
+  swagger-ui:
+    path: /swagger-ui.html # 网页版文档路径
+    operations-sorter: alpha # 接口按字母排序
+    tags-sorter: alpha
+  # 让它扫描你的控制器包路径
+  packages-to-scan: com.foodbank.dispatch.controller

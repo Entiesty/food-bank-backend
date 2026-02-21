@@ -1,0 +1,13 @@
+${AnsiColor.GREEN}
+  _______  _____   _____  ______   ______   _______  __   _  _     _
+  |______ |     | |     | |     \  |_____]  |_____|  | \  |  |____/
+  |       |_____| |_____| |_____/  |_____]  |     |  |  \_|  |    \_
+${AnsiColor.BRIGHT_YELLOW}
+      >>> COMMUNITY LBS DISPATCH SYSTEM v0.0.1-SNAPSHOT <<<
+${AnsiColor.CYAN}
+  ------------------------------------------------------------------
+  Spring Boot Version: ${spring-boot.version}
+  JDK Version: ${java.version} (Virtual Threads: ${spring.threads.virtual.enabled})
+  MySQL: 8.4 | Redis: 7.4 | RabbitMQ: 4.0
+  ------------------------------------------------------------------
+${AnsiColor.DEFAULT}
