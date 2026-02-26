@@ -1,9 +1,7 @@
 package com.foodbank.module.dispatch.entity;
 
-import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableField;
-import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.*;
+
 import java.io.Serializable;
 import java.time.LocalDateTime;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -39,6 +37,7 @@ public class Task implements Serializable {
 
     @Schema(description = "乐观锁版本号(解决高并发抢单)")
     @TableField("version")
+    @Version  // 🚨 核心改动：告诉 MyBatis-Plus 这是一个乐观锁字段
     private Integer version;
 
     @Schema(description = "1:已接单, 2:已取货, 3:已完成")
