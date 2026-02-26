@@ -66,5 +66,5 @@ springdoc:
     path: /swagger-ui.html # 网页版文档路径
     operations-sorter: alpha # 接口按字母排序
     tags-sorter: alpha
-  # 让它扫描你的控制器包路径
+  # 扫描控制器包路径
   packages-to-scan: com.foodbank.dispatch.controller

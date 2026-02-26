@@ -16,6 +16,6 @@ public class OpenApiConfig {
                         .title("社区“食物银行”及应急物资调度系统 - API接口文档")
                         .version("0.0.1-SNAPSHOT")
                         .description("基于 LBS 与多因子加权决策的应急物资调度系统后端接口")
-                        .contact(new Contact().name("厦理软件工程学长").email("student@xmut.edu.cn")));
+                        .contact(new Contact().name("Entiesty").email("boogiepop1221@gmail.com")));
     }
 }
