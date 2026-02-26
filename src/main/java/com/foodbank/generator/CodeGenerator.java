@@ -30,14 +30,14 @@ public class CodeGenerator {
                 // 包配置
                 .packageConfig(builder -> {
                     builder.parent("com.foodbank.module") // 父包名，对应我们的模块化改造
-                            .moduleName("system") // ⚠️注意：每次生成不同模块时，修改这里！例如 goods, dispatch, system
+                            .moduleName("dispatch") // ⚠️注意：每次生成不同模块时，修改这里！例如 goods, dispatch, system
                             .pathInfo(Collections.singletonMap(OutputFile.xml, projectPath + "/src/main/resources/mapper")); // XML 映射文件放到 resources 下
                 })
                 // 策略配置
                 .strategyConfig(builder -> {
                     builder
                             // ⚠️注意：每次生成时，把这里改成你要生成的表名
-                            .addInclude("sys_user", "sys_config")
+                            .addInclude("fb_order", "fb_task", "fb_credit_log")
 
                             // 过滤掉表前缀，例如 fb_goods 生成实体类是 Goods 而不是 FbGoods
                             .addTablePrefix("fb_", "sys_")
