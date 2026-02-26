@@ -46,12 +46,12 @@ public class AmapClientService {
             throw new BusinessException("地图服务暂时不可用，请稍后重试");
         }
 
-        if (response.data() == null || response.data().paths() == null || response.data().paths().isEmpty()) {
+        if (response.route() == null || response.route().paths() == null || response.route().paths().isEmpty()) {
             throw new BusinessException("无法计算出可行的骑行路线");
         }
 
         // 提取距离和时间信息
-        AmapDirectionResponse.Path path = response.data().paths().get(0);
+        AmapDirectionResponse.Path path = response.route().paths().get(0);
         log.debug("测算成功：距离 {} 米, 预计耗时 {} 秒", path.distance(), path.duration());
 
         return path;

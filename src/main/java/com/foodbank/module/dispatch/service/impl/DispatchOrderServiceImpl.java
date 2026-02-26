@@ -93,7 +93,8 @@ public class DispatchOrderServiceImpl {
                 candidates.add(candidate);
 
             } catch (Exception e) {
-                log.warn("高德路径规划异常，据点ID: {} 暂不参与本次调度", stationId);
+                // 把异常堆栈 e 打印出来，让 Bug 无所遁形
+                log.error("高德路径规划异常，据点ID: {} 暂不参与本次调度。详细报错：", stationId, e);
             }
         }
 

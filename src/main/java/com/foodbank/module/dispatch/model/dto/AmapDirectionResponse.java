@@ -12,7 +12,7 @@ import java.util.List;
 public record AmapDirectionResponse(
         String status,
         String info,
-        RouteData data
+        @JsonProperty("route") RouteData route
 ) {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record RouteData(List<Path> paths) {}
