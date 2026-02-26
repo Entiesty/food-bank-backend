@@ -67,4 +67,8 @@ springdoc:
     operations-sorter: alpha # 接口按字母排序
     tags-sorter: alpha
   # 扫描控制器包路径
-  packages-to-scan: com.foodbank.dispatch.controller
+  packages-to-scan: com.foodbank.module
+
+amap:
+  key: 8166896745a936d57199d8fa0590d1c0
+  url: https://restapi.amap.com/v3/direction/riding # 骑行路径规划 API
