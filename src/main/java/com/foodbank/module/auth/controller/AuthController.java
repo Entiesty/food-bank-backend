@@ -4,8 +4,10 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.foodbank.common.api.Result;
 import com.foodbank.common.exception.BusinessException;
 import com.foodbank.common.utils.JwtUtils;
-import com.foodbank.module.system.entity.User; // 🚨 引入刚刚生成的 User 类
-import com.foodbank.module.system.service.IUserService; // 🚨 引入刚才生成的 IUserService
+import com.foodbank.module.system.entity.User;
+import com.foodbank.module.system.service.IUserService;
+import com.foodbank.module.auth.model.vo.LoginVO; // 🚨 引入新建的视图对象
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,13 +24,13 @@ public class AuthController {
     @Autowired
     private JwtUtils jwtUtils;
 
-    // 🚨 注入真实的全局用户服务
     @Autowired
     private IUserService userService;
 
-    @Operation(summary = "系统统一登录入口", description = "校验手机号与密码，并进行 RBAC 角色鉴权")
+    @Operation(summary = "系统统一登录入口", description = "校验手机号与密码，并进行 RBAC 角色鉴权，返回包含角色信息的VO")
     @PostMapping("/login")
-    public Result<String> login(
+    // 🚨 注意这里：返回值泛型已经从 String 改成了 LoginVO
+    public Result<LoginVO> login(
             @Parameter(description = "手机号", example = "13800000000") @RequestParam String phone,
             @Parameter(description = "密码", example = "123456") @RequestParam String password) {
 
@@ -48,7 +50,7 @@ public class AuthController {
             throw new BusinessException("该账号已被系统封禁");
         }
 
-        // 3. 🚨 RBAC 权限校验：这里假设此接口是专门给“调度端(志愿者/管理员)”用的
+        // 3. RBAC 权限校验：限制仅志愿者或管理员可登录此调度端
         // role: 1-受赠方, 2-供应商家, 3-志愿者, 4-管理员
         if (user.getRole() != 3 && user.getRole() != 4) {
             throw new BusinessException("权限不足：该入口仅限志愿者或管理员登录");
@@ -60,7 +62,15 @@ public class AuthController {
 
         log.info("角色 [{}] 用户 [{}-{}] 登录成功", user.getRole(), realUserId, user.getUsername());
 
-        return Result.success(token, "登录成功，欢迎回来：" + user.getUsername());
+        // 🚨 5. 核心修改：组装包含 token 和 身份信息 的 LoginVO 对象返回给前端
+        LoginVO loginVO = LoginVO.builder()
+                .token(token)
+                .userId(realUserId)
+                .username(user.getUsername())
+                .role(user.getRole())
+                .build();
+
+        return Result.success(loginVO, "登录成功，欢迎回来：" + user.getUsername());
     }
 
     @Operation(summary = "强制登出 / 下线", description = "直接删除 Redis 中的 Token 缓存")
