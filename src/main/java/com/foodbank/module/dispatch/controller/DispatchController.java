@@ -1,6 +1,7 @@
 package com.foodbank.module.dispatch.controller;
 
 import com.foodbank.common.api.Result;
+import com.foodbank.common.utils.UserContext; // 🚨 引入刚才写好的线程上下文工具
 import com.foodbank.module.dispatch.model.dto.DispatchReqDTO;
 import com.foodbank.module.dispatch.model.vo.DispatchCandidateVO;
 import com.foodbank.module.dispatch.service.impl.DispatchOrderServiceImpl;
@@ -29,13 +30,15 @@ public class DispatchController {
         return Result.success(bestStations);
     }
 
-    @Operation(summary = "1. 志愿者抢单接口", description = "利用 CAS 机制处理高并发抢单，防止超卖")
+    @Operation(summary = "1. 志愿者抢单接口", description = "利用 CAS 机制处理高并发抢单，利用 UserContext 实现安全防篡改")
     @PostMapping("/grab")
     public Result<String> grabOrder(
-            @Parameter(description = "订单ID", required = true) @RequestParam Long orderId,
-            @Parameter(description = "志愿者ID", required = true) @RequestParam Long volunteerId) {
+            @Parameter(description = "订单ID", required = true) @RequestParam Long orderId) {
 
-        dispatchOrderService.grabOrder(orderId, volunteerId);
+        // 🚨 核心爽点：不再信任前端传来的 volunteerId，直接从底层拦截器解析出的 Token 中安全提取！
+        Long myVolunteerId = UserContext.getUserId();
+
+        dispatchOrderService.grabOrder(orderId, myVolunteerId);
         return Result.success("抢单成功！请尽快前往据点取货");
     }
 

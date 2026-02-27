@@ -1,8 +1,11 @@
 package com.foodbank.module.auth.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.foodbank.common.api.Result;
 import com.foodbank.common.exception.BusinessException;
 import com.foodbank.common.utils.JwtUtils;
+import com.foodbank.module.system.entity.User; // 🚨 引入刚刚生成的 User 类
+import com.foodbank.module.system.service.IUserService; // 🚨 引入刚才生成的 IUserService
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -19,34 +22,51 @@ public class AuthController {
     @Autowired
     private JwtUtils jwtUtils;
 
-    @Operation(summary = "模拟志愿者登录", description = "校验账号密码，成功则返回双重校验的 JWT Token")
+    // 🚨 注入真实的全局用户服务
+    @Autowired
+    private IUserService userService;
+
+    @Operation(summary = "系统统一登录入口", description = "校验手机号与密码，并进行 RBAC 角色鉴权")
     @PostMapping("/login")
     public Result<String> login(
             @Parameter(description = "手机号", example = "13800000000") @RequestParam String phone,
             @Parameter(description = "密码", example = "123456") @RequestParam String password) {
 
-        // 1. 模拟数据库查询校验 (真实项目中这里会去调用 IUserService)
-        if (!"13800000000".equals(phone) || !"123456".equals(password)) {
-            throw new BusinessException("手机号或密码错误");
+        // 1. 根据手机号查询统一用户表
+        User user = userService.getOne(
+                new LambdaQueryWrapper<User>().eq(User::getPhone, phone)
+        );
+
+        // 2. 基础校验
+        if (user == null) {
+            throw new BusinessException("该手机号未注册");
+        }
+        if (!user.getPassword().equals(password)) {
+            throw new BusinessException("密码错误，请重新输入");
+        }
+        if (user.getStatus() == 0) {
+            throw new BusinessException("该账号已被系统封禁");
         }
 
-        // 2. 模拟校验通过，查出该名志愿者的真实 ID (比如是 888)
-        Long volunteerId = 888L;
+        // 3. 🚨 RBAC 权限校验：这里假设此接口是专门给“调度端(志愿者/管理员)”用的
+        // role: 1-受赠方, 2-供应商家, 3-志愿者, 4-管理员
+        if (user.getRole() != 3 && user.getRole() != 4) {
+            throw new BusinessException("权限不足：该入口仅限志愿者或管理员登录");
+        }
 
-        // 3. 核心：调用 JwtUtils 生成 Token 并自动存入 Redis！
-        String token = jwtUtils.generateTokenAndCache(volunteerId);
+        // 4. 校验通过，签发 Token 并存入 Redis
+        Long realUserId = user.getUserId();
+        String token = jwtUtils.generateTokenAndCache(realUserId);
 
-        log.info("志愿者 [{}] 登录成功，下发 Token", volunteerId);
+        log.info("角色 [{}] 用户 [{}-{}] 登录成功", user.getRole(), realUserId, user.getUsername());
 
-        // 返回给前端
-        return Result.success(token, "登录成功，欢迎回来！");
+        return Result.success(token, "登录成功，欢迎回来：" + user.getUsername());
     }
 
-    @Operation(summary = "强制登出 / 下线", description = "直接删除 Redis 中的 Token 缓存，实现秒级强制下线")
+    @Operation(summary = "强制登出 / 下线", description = "直接删除 Redis 中的 Token 缓存")
     @PostMapping("/logout")
     public Result<String> logout(
-            @Parameter(description = "志愿者ID", example = "888") @RequestParam Long userId) {
-        // 注：真实环境中，userId 会通过 UserContext.getUserId() 自动获取，这里为了方便测试暴露为参数
+            @Parameter(description = "用户ID") @RequestParam Long userId) {
         jwtUtils.invalidateToken(userId);
         return Result.success("账号已成功退出登录");
     }
