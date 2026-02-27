@@ -118,7 +118,7 @@ public class DispatchOrderServiceImpl {
 
         if (!isGrabbed) {
             log.warn("抢单失败：订单 [{}] 状态已变更或不存在，竞争者 [{}]", orderId, volunteerId);
-            throw new BusinessException("手慢了！该订单已被其他志愿者抢走啦");
+            throw new BusinessException("晚了一小步，该任务已有志愿者领取了。感谢你的热心，去看看其他任务吧！");
         }
 
         // 防线 2：唯一索引兜底
