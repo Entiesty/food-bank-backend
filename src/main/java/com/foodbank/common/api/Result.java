@@ -4,7 +4,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 全局统一响应体
+ * 全局统一响应体 - 增强版
  */
 @Data
 public class Result<T> {
@@ -44,14 +44,23 @@ public class Result<T> {
     }
 
     /**
+     * 失败返回结果 (自定义错误信息，手动指定错误码)
+     * 🚨 推荐：业务拦截使用 400，系统崩溃使用 500
+     */
+    public static <T> Result<T> failed(long code, String message) {
+        return new Result<>(code, message, null);
+    }
+
+    /**
      * 失败返回结果 (传自定义错误信息，默认 500 状态码)
+     * ⚠️ 注意：仅用于真正的系统兜底异常
      */
     public static <T> Result<T> failed(String message) {
         return new Result<>(ResultCode.FAILED.getCode(), message, null);
     }
 
     /**
-     * 失败返回结果 (自定义错误码和错误信息) —— 给全局异常拦截器兜底使用
+     * 失败返回结果 (全参数构造)
      */
     public static <T> Result<T> failed(long code, String message, T data) {
         return new Result<>(code, message, data);
