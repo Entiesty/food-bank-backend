@@ -1,7 +1,7 @@
 package com.foodbank.module.dispatch.model.vo;
 
-import com.foodbank.module.goods.entity.Goods;
-import com.foodbank.module.station.entity.Station;
+import com.foodbank.module.resource.goods.entity.Goods;
+import com.foodbank.module.resource.station.entity.Station;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;

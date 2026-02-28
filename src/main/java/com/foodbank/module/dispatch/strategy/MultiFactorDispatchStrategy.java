@@ -1,8 +1,8 @@
 package com.foodbank.module.dispatch.strategy;
 
 import com.foodbank.module.dispatch.model.vo.DispatchCandidateVO;
-import com.foodbank.module.system.entity.Config;
-import com.foodbank.module.system.service.IConfigService;
+import com.foodbank.module.system.config.entity.Config;
+import com.foodbank.module.system.config.service.IConfigService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;

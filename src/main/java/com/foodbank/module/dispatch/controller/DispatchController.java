@@ -2,10 +2,10 @@ package com.foodbank.module.dispatch.controller;
 
 import com.foodbank.common.api.Result;
 import com.foodbank.common.utils.UserContext;
-import com.foodbank.module.dispatch.entity.Order;
+import com.foodbank.module.trade.order.entity.DispatchOrder;
 import com.foodbank.module.dispatch.model.dto.DemandPublishDTO;
 import com.foodbank.module.dispatch.model.vo.DispatchCandidateVO;
-import com.foodbank.module.dispatch.service.impl.DispatchOrderServiceImpl;
+import com.foodbank.module.dispatch.service.impl.DispatchEngineServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,20 +21,20 @@ import java.util.List;
 public class DispatchController {
 
     @Autowired
-    private DispatchOrderServiceImpl dispatchOrderService;
+    private DispatchEngineServiceImpl dispatchOrderService;
 
     @Operation(summary = "0. 模拟智能派单计算(答辩演示专用)", description = "直接输入经纬度和需求，不落库，直接返回算法打分与排序结果")
     @PostMapping("/smart-match")
     public Result<List<DispatchCandidateVO>> smartMatch(@Validated @RequestBody DemandPublishDTO reqDTO) {
         // 🚨 将前端传来的 DTO 组装成临时的 Order 对象，适配我们升级后的引擎
-        Order tempOrder = new Order();
-        tempOrder.setTargetLon(reqDTO.getTargetLon());
-        tempOrder.setTargetLat(reqDTO.getTargetLat());
-        tempOrder.setRequiredCategory(reqDTO.getRequiredCategory());
-        tempOrder.setUrgencyLevel(reqDTO.getUrgencyLevel().byteValue());
+        DispatchOrder tempDispatchOrder = new DispatchOrder();
+        tempDispatchOrder.setTargetLon(reqDTO.getTargetLon());
+        tempDispatchOrder.setTargetLat(reqDTO.getTargetLat());
+        tempDispatchOrder.setRequiredCategory(reqDTO.getRequiredCategory());
+        tempDispatchOrder.setUrgencyLevel(reqDTO.getUrgencyLevel().byteValue());
 
         // 调用流水线服务，直接返回各种因子的打分明细
-        List<DispatchCandidateVO> bestStations = dispatchOrderService.smartMatchStations(tempOrder);
+        List<DispatchCandidateVO> bestStations = dispatchOrderService.smartMatchStations(tempDispatchOrder);
         return Result.success(bestStations);
     }
 

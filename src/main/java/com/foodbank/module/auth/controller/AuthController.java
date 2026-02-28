@@ -4,8 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.foodbank.common.api.Result;
 import com.foodbank.common.exception.BusinessException;
 import com.foodbank.common.utils.JwtUtils;
-import com.foodbank.module.system.entity.User;
-import com.foodbank.module.system.service.IUserService;
+import com.foodbank.module.system.user.entity.User;
+import com.foodbank.module.system.user.service.IUserService;
 import com.foodbank.module.auth.model.vo.LoginVO; // 🚨 引入新建的视图对象
 
 import io.swagger.v3.oas.annotations.Operation;
