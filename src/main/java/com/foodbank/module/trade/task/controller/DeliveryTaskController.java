@@ -1,20 +1,19 @@
 package com.foodbank.module.trade.task.controller;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.foodbank.common.api.Result;
 import com.foodbank.common.utils.UserContext;
+import com.foodbank.module.trade.task.model.vo.MyTaskVO;
 import com.foodbank.module.trade.task.service.IDeliveryTaskService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @Tag(name = "Task Controller", description = "志愿者任务执行与核销管理")
 @RestController
-@RequestMapping("/dispatch/task")
+@RequestMapping("/trade/task") // 🚨 修复路径前缀
 public class DeliveryTaskController {
 
     @Autowired
@@ -24,13 +23,19 @@ public class DeliveryTaskController {
     @PostMapping("/checkout")
     public Result<String> checkOutTask(
             @Parameter(description = "任务ID", required = true) @RequestParam Long taskId) {
-
-        // 🚨 安全增强：从线程上下文中获取真实的志愿者ID
         Long myVolunteerId = UserContext.getUserId();
-
-        // 调用 Service 层处理状态变更、信誉分累加及信用日志记录的事务逻辑
         taskService.completeTask(taskId, myVolunteerId);
-
         return Result.success("核销成功！信誉分已奖励，感谢您的付出。");
+    }
+
+    @Operation(summary = "4. 获取我的任务列表", description = "志愿者获取自己当前的历史和执行中的任务")
+    @GetMapping("/my-tasks")
+    public Result<Page<MyTaskVO>> getMyTasks(
+            @Parameter(description = "任务状态筛选项(1接单 2取货 3完成, 不传则查全部)") @RequestParam(required = false) Byte status,
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize) {
+
+        Long myVolunteerId = UserContext.getUserId();
+        return Result.success(taskService.getMyTasksPage(myVolunteerId, status, pageNum, pageSize));
     }
 }

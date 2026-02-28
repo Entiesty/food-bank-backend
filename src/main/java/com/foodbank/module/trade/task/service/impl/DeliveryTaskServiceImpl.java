@@ -1,13 +1,18 @@
 package com.foodbank.module.trade.task.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.foodbank.common.exception.BusinessException;
+import com.foodbank.module.resource.station.entity.Station;
+import com.foodbank.module.resource.station.service.IStationService;
 import com.foodbank.module.system.user.entity.CreditLog;
 import com.foodbank.module.trade.order.entity.DispatchOrder;
 import com.foodbank.module.trade.task.entity.DeliveryTask;
 import com.foodbank.module.trade.task.mapper.DeliveryTaskMapper;
 import com.foodbank.module.system.user.service.ICreditLogService;
 import com.foodbank.module.trade.order.service.IDispatchOrderService;
+import com.foodbank.module.trade.task.model.vo.MyTaskVO;
 import com.foodbank.module.trade.task.service.IDeliveryTaskService;
 import com.foodbank.module.system.user.entity.User;
 import com.foodbank.module.system.user.service.IUserService;
@@ -17,6 +22,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -28,11 +35,12 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
     private IUserService userService;
     @Autowired
     private ICreditLogService creditLogService;
+    @Autowired
+    private IStationService stationService; // 🚨 注入据点服务用于数据拼装
 
     @Override
-    @Transactional(rollbackFor = Exception.class) // 🚨 保证原子性
+    @Transactional(rollbackFor = Exception.class)
     public void completeTask(Long taskId, Long userId) {
-        // 1. 获取并校验任务
         DeliveryTask deliveryTask = this.getById(taskId);
         if (deliveryTask == null) {
             throw new BusinessException("未找到该配送任务");
@@ -40,33 +48,25 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         if (!deliveryTask.getVolunteerId().equals(userId)) {
             throw new BusinessException("权限不足：您不是该任务的执行人");
         }
-
-        // 🚨 校验状态：2:已取货 才能核销
         if (deliveryTask.getTaskStatus() != 2) {
             throw new BusinessException("任务当前状态无法核销（需先确认取货）");
         }
 
-        // 2. 更新任务状态为“已完成(3)”
         deliveryTask.setTaskStatus((byte) 3);
         deliveryTask.setCompleteTime(LocalDateTime.now());
         this.updateById(deliveryTask);
 
-        // 3. 同步更新原始订单表状态为“已送达(2)”
         DispatchOrder dispatchOrder = orderService.getById(deliveryTask.getOrderId());
         if (dispatchOrder != null) {
             dispatchOrder.setStatus((byte) 2);
             orderService.updateById(dispatchOrder);
         }
 
-        // 4. 结算信誉分奖励
         rewardVolunteerCredit(userId, deliveryTask.getOrderId());
     }
 
-    /**
-     * 内部方法：处理信用分累加与日志记录
-     */
     private void rewardVolunteerCredit(Long userId, Long orderId) {
-        int rewardPoints = 5; // 基础奖励分
+        int rewardPoints = 5;
         User user = userService.getById(userId);
 
         if (user != null && user.getRole() != null && user.getRole() == 3) {
@@ -74,18 +74,50 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
             user.setCreditScore(oldScore + rewardPoints);
             userService.updateById(user);
 
-            // 🚨 修正：将变量名改为 creditLog，避免和 @Slf4j 的 log 冲突
             CreditLog creditLog = new CreditLog();
             creditLog.setUserId(userId);
             creditLog.setOrderId(orderId);
             creditLog.setChangeValue(rewardPoints);
             creditLog.setReason("完成订单送达，发放积分奖励");
             creditLog.setCreateTime(LocalDateTime.now());
-
             creditLogService.save(creditLog);
 
-            // 现在的 log 正确指向了日志打印器
             log.info("志愿者[{}]完成配送，信誉分增加{}，当前总分:{}", userId, rewardPoints, user.getCreditScore());
         }
+    }
+
+    @Override
+    public Page<MyTaskVO> getMyTasksPage(Long volunteerId, Byte status, int pageNum, int pageSize) {
+        LambdaQueryWrapper<DeliveryTask> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(DeliveryTask::getVolunteerId, volunteerId);
+        if (status != null) {
+            queryWrapper.eq(DeliveryTask::getTaskStatus, status);
+        }
+        queryWrapper.orderByDesc(DeliveryTask::getAcceptTime);
+
+        Page<DeliveryTask> taskPage = this.page(new Page<>(pageNum, pageSize), queryWrapper);
+
+        List<MyTaskVO> voList = taskPage.getRecords().stream().map(task -> {
+            DispatchOrder order = orderService.getById(task.getOrderId());
+            Station station = null;
+            if (order != null && order.getSourceId() != null) {
+                station = stationService.getById(order.getSourceId());
+            }
+            return MyTaskVO.builder()
+                    .taskId(task.getTaskId())
+                    .taskStatus(task.getTaskStatus())
+                    .acceptTime(task.getAcceptTime())
+                    .orderId(task.getOrderId())
+                    .requiredCategory(order != null ? order.getRequiredCategory() : "未知")
+                    .targetLon(order != null ? order.getTargetLon() : null)
+                    .targetLat(order != null ? order.getTargetLat() : null)
+                    .stationName(station != null ? station.getStationName() : "未知取货点")
+                    .stationAddress(station != null ? station.getAddress() : "未知地址")
+                    .build();
+        }).collect(Collectors.toList());
+
+        Page<MyTaskVO> resultPage = new Page<>(pageNum, pageSize, taskPage.getTotal());
+        resultPage.setRecords(voList);
+        return resultPage;
     }
 }

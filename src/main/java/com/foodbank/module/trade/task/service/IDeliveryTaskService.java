@@ -1,19 +1,16 @@
 package com.foodbank.module.trade.task.service;
 
-import com.foodbank.module.trade.task.entity.DeliveryTask;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.foodbank.module.trade.task.entity.DeliveryTask;
+import com.foodbank.module.trade.task.model.vo.MyTaskVO;
 
-/**
- * <p>
- * 志愿者配送执行任务表 服务类
- * </p>
- */
 public interface IDeliveryTaskService extends IService<DeliveryTask> {
 
-    /**
-     * 完成任务核销并结算奖励
-     * @param taskId 任务ID (已修正为 Long)
-     * @param userId 志愿者ID
-     */
     void completeTask(Long taskId, Long userId);
+
+    /**
+     * 🚀 新增：获取志愿者的任务列表（可按状态过滤）
+     */
+    Page<MyTaskVO> getMyTasksPage(Long volunteerId, Byte status, int pageNum, int pageSize);
 }

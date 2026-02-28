@@ -19,4 +19,9 @@ public interface IStationService extends IService<Station> {
      * @return 附近的据点 ID 及直线距离信息
      */
     GeoResults<RedisGeoCommands.GeoLocation<String>> searchNearbyStations(Double longitude, Double latitude, double radius);
+
+    /**
+     * 🚨 新增：设立新据点，并保证 MySQL 与 Redis Geo 的双写一致性
+     */
+    boolean addStationAndSyncGeo(Station station);
 }

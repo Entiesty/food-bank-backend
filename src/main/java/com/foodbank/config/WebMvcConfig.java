@@ -26,6 +26,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/auth/login",             // 必须放行，否则没法领 Token
                         "/auth/register",          // 注册接口
 
+                        // 🚨 新增：--- 数据大屏模块 (无需 Token 直接调用) ---
+                        "/dispatch/dashboard/**",  // 放行所有大屏统计接口
+
                         // --- 静态资源与图片 ---
                         "/favicon.ico",            // 浏览器小图标
                         "/upload/**",              // 假设你的志愿者证明材料存在这里

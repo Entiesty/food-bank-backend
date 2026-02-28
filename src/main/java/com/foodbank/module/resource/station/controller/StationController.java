@@ -1,32 +1,44 @@
 package com.foodbank.module.resource.station.controller;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.foodbank.common.api.Result;
+import com.foodbank.common.utils.UserContext;
 import com.foodbank.module.resource.station.entity.Station;
 import com.foodbank.module.resource.station.service.IStationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
+import org.springframework.web.bind.annotation.*;
 
 @Tag(name = "Station Controller", description = "物资据点管理接口")
 @RestController
-@RequestMapping("/station") // 前端代理后的实际请求路径
+@RequestMapping("/resource/station") // 🚨 调整为规范的资源域路径
 public class StationController {
 
     @Autowired
     private IStationService stationService;
 
-    @Operation(summary = "获取所有可用据点", description = "供前端地图页面渲染Marker使用")
-    @GetMapping("/list")
-    public Result<List<Station>> getStationList() {
-        // 调用 Service 层获取数据
-        List<Station> list = stationService.list();
+    @Operation(summary = "1. 新增社区据点", description = "管理员添加据点，系统自动同步其经纬度至 Redis Geo")
+    @PostMapping("/add")
+    public Result<String> addStation(@RequestBody Station station) {
+        // 🚨 鉴权：只有管理员(Role=4)可以设立新据点
+        Byte role = UserContext.getUserRole();
+        if (role == null || role != 4) {
+            return Result.failed("越权操作：仅限系统管理员执行");
+        }
 
-        // 使用我们封装的全局响应体包裹数据
-        return Result.success(list);
+        stationService.addStationAndSyncGeo(station);
+        return Result.success("据点设立成功！调度引擎已将其纳入雷达监控范围。");
+    }
+
+    @Operation(summary = "2. 分页获取可用据点", description = "供前端地图页面渲染Marker及后台列表管理使用")
+    @GetMapping("/list")
+    public Result<Page<Station>> getStationList(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize) {
+
+        // 分页查询并返回
+        Page<Station> pageResult = stationService.page(new Page<>(pageNum, pageSize));
+        return Result.success(pageResult);
     }
 }
