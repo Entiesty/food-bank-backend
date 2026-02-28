@@ -2,6 +2,9 @@ package com.foodbank.module.dispatch.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.foodbank.common.api.Result;
+import com.foodbank.common.api.ResultCode;
+import com.foodbank.common.exception.BusinessException;
+import com.foodbank.common.utils.UserContext;
 import com.foodbank.module.dispatch.entity.Order;
 import com.foodbank.module.dispatch.model.dto.DemandPublishDTO;
 import com.foodbank.module.dispatch.service.IOrderService;
@@ -48,6 +51,12 @@ public class OrderController {
     @Operation(summary = "受赠方发布紧急求助/物资需求")
     @PostMapping("/publish-demand")
     public Result<Void> publishDemand(@Validated @RequestBody DemandPublishDTO dto) {
+        // 🚨 RBAC 拦截防线：如果不是受赠方(1)或管理员(4)，直接踢出去！
+        Byte role = UserContext.getUserRole();
+        if (role != 1 && role != 4) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "越权操作：只有受赠方可以发布求助！");
+        }
+
         orderService.publishDemandOrder(dto);
         return Result.success(null, "求助信息已发布，系统正在为您智能匹配物资...");
     }

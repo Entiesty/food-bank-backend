@@ -2,24 +2,34 @@ package com.foodbank.common.utils;
 
 /**
  * 线程级用户上下文工具 (ThreadLocal)
- * 作用：在拦截器验证通过后，将当前用户的 ID 存入当前请求的线程中，方便业务层随时获取，防止数据越权。
  */
 public class UserContext {
 
-    private static final ThreadLocal<Long> USER_THREAD_LOCAL = new ThreadLocal<>();
+    private static final ThreadLocal<Long> USER_ID_LOCAL = new ThreadLocal<>();
+    // 🚨 新增：用于存储当前用户的角色
+    private static final ThreadLocal<Byte> USER_ROLE_LOCAL = new ThreadLocal<>();
 
     public static void setUserId(Long userId) {
-        USER_THREAD_LOCAL.set(userId);
+        USER_ID_LOCAL.set(userId);
     }
 
     public static Long getUserId() {
-        return USER_THREAD_LOCAL.get();
+        return USER_ID_LOCAL.get();
+    }
+
+    public static void setUserRole(Byte role) {
+        USER_ROLE_LOCAL.set(role);
+    }
+
+    public static Byte getUserRole() {
+        return USER_ROLE_LOCAL.get();
     }
 
     /**
-     * 🚨 极其重要：防止内存泄漏，必须在请求结束后清除
+     * 🚨 极其重要：防止内存泄漏，必须在请求结束后清除所有 ThreadLocal
      */
     public static void remove() {
-        USER_THREAD_LOCAL.remove();
+        USER_ID_LOCAL.remove();
+        USER_ROLE_LOCAL.remove(); // 清理角色
     }
 }

@@ -40,20 +40,19 @@ public class AuthInterceptor implements HandlerInterceptor {
             throw new BusinessException(ResultCode.UNAUTHORIZED); //
         }
 
-        // 4. 提取并验证 Token
+        // 4. 提取并验证 Token (🚨 核心修改：接收 TokenInfo)
         String token = authHeader.substring(7);
-        // 这里会同时校验 JWT 合法性及 Redis 是否存在缓存
-        Long userId = jwtUtils.validateTokenAndCheckRedis(token);
+        JwtUtils.TokenInfo tokenInfo = jwtUtils.validateTokenAndCheckRedis(token);
 
-        if (userId == null) {
+        if (tokenInfo == null || tokenInfo.userId == null) {
             log.warn("⚠️ 鉴权失败：Token 已过期或无效，URI: {}", request.getRequestURI());
-            throw new BusinessException(ResultCode.UNAUTHORIZED); //
+            throw new BusinessException(ResultCode.UNAUTHORIZED);
         }
 
-        // 5. 🚀 身份透传：挂载到当前线程上下文
-        // 这样你在 Controller 里直接用 UserContext.getUserId() 就能拿到 ID，不用前端传参了！
-        UserContext.setUserId(userId);
-        log.info("✅ 鉴权通过：用户ID [{}] 正在访问 [{}]", userId, request.getRequestURI());
+        // 5. 🚀 身份与权限透传：挂载到当前线程上下文
+        UserContext.setUserId(tokenInfo.userId);
+        UserContext.setUserRole(tokenInfo.role); // 🚨 将角色同步放入上下文
+        log.info("✅ 鉴权通过：角色 [{}] 的用户 [{}] 正在访问 [{}]", tokenInfo.role, tokenInfo.userId, request.getRequestURI());
 
         return true;
     }

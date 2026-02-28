@@ -58,7 +58,7 @@ public class AuthController {
 
         // 4. 校验通过，签发 Token 并存入 Redis
         Long realUserId = user.getUserId();
-        String token = jwtUtils.generateTokenAndCache(realUserId);
+        String token = jwtUtils.generateTokenAndCache(realUserId, user.getRole());
 
         log.info("角色 [{}] 用户 [{}-{}] 登录成功", user.getRole(), realUserId, user.getUsername());
 

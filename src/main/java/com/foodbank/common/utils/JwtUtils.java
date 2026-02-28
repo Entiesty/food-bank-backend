@@ -33,58 +33,51 @@ public class JwtUtils {
     private StringRedisTemplate redisTemplate;
 
     /**
-     * 1. 登录成功后：签发 Token，并存入 Redis
+     * 1. 登录成功后：签发 Token，并存入 Redis (🚨 核心修改：增加 role 参数)
      */
-    public String generateTokenAndCache(Long userId) {
-        // 1.1 生成原生的 JWT
+    public String generateTokenAndCache(Long userId, Byte role) {
         String token = Jwts.builder()
                 .subject(String.valueOf(userId))
+                .claim("role", role) // 🚨 核心王牌：将角色信息刻入 JWT Payload 中
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME_MS))
                 .signWith(SECRET_KEY)
                 .compact();
 
-        // 1.2 🚨 核心王牌：将 Token 存入 Redis (设置相同的过期时间)
-        // Key 格式 -> security:token:user:888  | Value -> 刚生成的 jwt
         String redisKey = REDIS_TOKEN_PREFIX + userId;
         redisTemplate.opsForValue().set(redisKey, token, EXPIRATION_TIME_MS, TimeUnit.MILLISECONDS);
 
-        log.info("用户 [{}] 登录成功，Token 已生成并存入 Redis", userId);
+        log.info("用户 [{}] (角色:{}) 登录成功，Token 已生成", userId, role);
         return token;
     }
 
     /**
-     * 2. 拦截器校验：解析 Token，并与 Redis 中的数据进行“双重比对”
-     * @return 校验通过返回 userId；失败或被踢下线返回 null
+     * 2. 拦截器校验：解析 Token
+     * @return 返回包含 userId 和 role 的对象
      */
-    public Long validateTokenAndCheckRedis(String token) {
+    public TokenInfo validateTokenAndCheckRedis(String token) {
         try {
-            // 2.1 第一重校验：验证 JWT 自身的合法性和是否过期
             Claims claims = Jwts.parser()
                     .verifyWith(SECRET_KEY)
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
-            Long userId = Long.parseLong(claims.getSubject());
 
-            // 2.2 🚨 第二重校验：去 Redis 里查当前的 Token 是否匹配
+            Long userId = Long.parseLong(claims.getSubject());
+            // 🚨 解析角色信息 (注意 JSON 序列化时数字可能变成 Integer)
+            Integer roleInt = claims.get("role", Integer.class);
+            Byte role = roleInt != null ? roleInt.byteValue() : null;
+
             String redisKey = REDIS_TOKEN_PREFIX + userId;
             String redisToken = redisTemplate.opsForValue().get(redisKey);
 
-            if (!StringUtils.hasText(redisToken)) {
-                log.warn("用户 [{}] 的 Token 在 Redis 中不存在 (可能已主动注销或被管理员踢出)", userId);
-                return null;
-            }
-            if (!redisToken.equals(token)) {
-                log.warn("用户 [{}] 的 Token 与 Redis 中不匹配 (该账号已在其他设备登录，当前设备被顶号)", userId);
-                return null;
+            if (!StringUtils.hasText(redisToken) || !redisToken.equals(token)) {
+                return null; // Redis 校验不通过
             }
 
-            // 两重校验全部通过！
-            return userId;
+            return new TokenInfo(userId, role); // 校验全部通过，返回完整信息
 
         } catch (Exception e) {
-            log.error("JWT 本身解析失败 (被篡改或已过期): {}", e.getMessage());
             return null;
         }
     }
@@ -95,5 +88,17 @@ public class JwtUtils {
     public void invalidateToken(Long userId) {
         redisTemplate.delete(REDIS_TOKEN_PREFIX + userId);
         log.info("用户 [{}] 的 Token 已被主动销毁，瞬间失效", userId);
+    }
+
+    /**
+     * 内部数据类，用于封装解析后的 Token 结果
+     */
+    public static class TokenInfo {
+        public Long userId;
+        public Byte role;
+        public TokenInfo(Long userId, Byte role) {
+            this.userId = userId;
+            this.role = role;
+        }
     }
 }

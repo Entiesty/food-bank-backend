@@ -12,16 +12,24 @@ public class BusinessException extends RuntimeException {
     private final ResultCode resultCode;
 
     /**
-     * 核心修正：默认使用 BAD_REQUEST (400)
-     * 代表这是业务层面的逻辑拦截，而不是系统崩溃
+     * 默认使用 BAD_REQUEST (400)
      */
     public BusinessException(String message) {
         super(message);
         this.resultCode = ResultCode.BAD_REQUEST;
     }
 
+    /**
+     * 只传入枚举状态码
+     */
     public BusinessException(ResultCode resultCode) {
         super(resultCode.getMessage());
+        this.resultCode = resultCode;
+    }
+
+    // 👇 🚨 新增：同时支持指定枚举状态码和自定义报错信息
+    public BusinessException(ResultCode resultCode, String message) {
+        super(message);
         this.resultCode = resultCode;
     }
 }
