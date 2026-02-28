@@ -38,6 +38,11 @@ public class Order implements Serializable {
     @TableField("order_type")
     private Byte orderType;
 
+    // 👇 这是新增的字段，对应数据库的 required_category
+    @Schema(description = "需求物资大类(如:医疗包,饮用水)")
+    @TableField("required_category")
+    private String requiredCategory;
+
     @TableField("goods_id")
     private Long goodsId;
 

@@ -3,13 +3,13 @@ package com.foodbank.module.dispatch.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.foodbank.common.api.Result;
 import com.foodbank.module.dispatch.entity.Order;
+import com.foodbank.module.dispatch.model.dto.DemandPublishDTO;
 import com.foodbank.module.dispatch.service.IOrderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
@@ -43,5 +43,12 @@ public class OrderController {
         List<Order> pendingList = orderService.list(queryWrapper);
 
         return Result.success(pendingList);
+    }
+
+    @Operation(summary = "受赠方发布紧急求助/物资需求")
+    @PostMapping("/publish-demand")
+    public Result<Void> publishDemand(@Validated @RequestBody DemandPublishDTO dto) {
+        orderService.publishDemandOrder(dto);
+        return Result.success(null, "求助信息已发布，系统正在为您智能匹配物资...");
     }
 }
