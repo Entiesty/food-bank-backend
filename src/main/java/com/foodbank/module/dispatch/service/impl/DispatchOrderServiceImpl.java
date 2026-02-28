@@ -49,53 +49,61 @@ public class DispatchOrderServiceImpl {
     // ================= 核心业务方法 =================
 
     /**
-     * 核心 1：一键智能匹配最优派发据点 (之前的代码，保持不变)
+     * 核心 1：一键智能匹配最优派发据点 (已适配宽泛类别匹配)
      */
-    public List<DispatchCandidateVO> smartMatchStations(DispatchReqDTO reqDTO) {
-        log.info("接收到智能派单请求，坐标:[{},{}], 物资ID:{}, 紧急度:{}",
-                reqDTO.getLongitude(), reqDTO.getLatitude(), reqDTO.getGoodsId(), reqDTO.getUrgency());
+    public List<DispatchCandidateVO> smartMatchStations(Order order) {
+        log.info("📡 启动智能派单匹配，坐标:[{},{}], 需求物资大类:{}, 紧急度:{}",
+                order.getTargetLon(), order.getTargetLat(), order.getRequiredCategory(), order.getUrgencyLevel());
 
+        // 1. Redis Geo 空间初筛 (方圆 5 公里)
         GeoResults<RedisGeoCommands.GeoLocation<String>> geoResults =
-                stationService.searchNearbyStations(reqDTO.getLongitude(), reqDTO.getLatitude(), 5.0);
+                stationService.searchNearbyStations(order.getTargetLon().doubleValue(), order.getTargetLat().doubleValue(), 5.0);
 
         if (geoResults == null || geoResults.getContent().isEmpty()) {
             throw new BusinessException("附近 5 公里内暂无可用食物银行据点");
         }
 
         List<DispatchCandidateVO> candidates = new ArrayList<>();
-        String originLonLat = reqDTO.getLongitude() + "," + reqDTO.getLatitude();
+        String originLonLat = order.getTargetLon() + "," + order.getTargetLat();
 
+        // 2. 遍历附近据点，进行物资复筛与高德路径规划
         for (var result : geoResults.getContent()) {
             Long stationId = Long.parseLong(result.getContent().getName());
+
+            // 🚨 核心修复：按【类别】而非具体 ID 查找，且必须是已入库(2)的物资
             Goods goods = goodsService.getOne(new LambdaQueryWrapper<Goods>()
                     .eq(Goods::getCurrentStationId, stationId)
-                    .eq(Goods::getGoodsId, reqDTO.getGoodsId())
-                    .eq(Goods::getStatus, 2));
+                    .eq(Goods::getCategory, order.getRequiredCategory())
+                    .eq(Goods::getStatus, 2)
+                    .last("LIMIT 1")); // 只要该据点有这个类别的物资就行
 
-            int currentStock = (goods != null && goods.getStock() != null) ? goods.getStock() : 0;
-            if (currentStock <= 0) continue;
+            if (goods == null || goods.getStock() <= 0) continue;
 
             Station station = stationService.getById(stationId);
             if (station == null) continue;
 
             String destLonLat = station.getLongitude() + "," + station.getLatitude();
             try {
+                // 调用高德 API 获取真实骑行距离与耗时
                 AmapDirectionResponse.Path path = amapClientService.getRidingDistance(originLonLat, destLonLat);
                 candidates.add(DispatchCandidateVO.builder()
                         .station(station)
+                        .goods(goods) // 🚨 别忘了把查到的具体物资塞进去，后续算法要用它的过期时间！
                         .distance(path.distance())
                         .duration(path.duration())
-                        .currentStock(currentStock)
+                        .currentStock(goods.getStock())
                         .build());
             } catch (Exception e) {
-                log.error("高德路径规划异常，据点ID: {} 暂不参与本次调度。详细报错：", stationId, e);
+                log.error("高德路径规划异常，据点ID: {} 暂不参与本次调度。详细报错：{}", stationId, e.getMessage());
             }
         }
 
         if (candidates.isEmpty()) {
-            throw new BusinessException("附近的据点均无库存或无法规划到达路线");
+            throw new BusinessException("附近的据点均无对应类别的库存物资");
         }
-        return dispatchStrategy.calculateAndRank(candidates, reqDTO.getUrgency());
+
+        // 3. 丢给核心加权算法算分并排序
+        return dispatchStrategy.calculateAndRank(candidates, order.getUrgencyLevel());
     }
 
     /**
