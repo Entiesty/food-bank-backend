@@ -1,27 +1,36 @@
 package com.foodbank.module.dispatch.model.vo;
 
+import com.foodbank.module.goods.entity.Goods;
 import com.foodbank.module.station.entity.Station;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /**
- * 多因子决策候选据点视图对象
+ * 调度候选据点及物资视图对象
  */
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class DispatchCandidateVO {
 
+    // 候选据点信息
     private Station station;
 
-    // 真实骑行距离 (米)
+    // 匹配到的具体可用物资
+    private Goods goods;
+
+    // 距离求助者的真实距离（米）
     private Long distance;
 
-    // 预计骑行耗时 (秒)
+    // 骑行预计耗时（秒）- 接收高德地图返回的时间
     private Long duration;
 
-    // 当前该物资的库存量
-    private Integer currentStock;
+    // 当前可用库存
+    private int currentStock;
 
-    // 综合加权得分 (决定最终派单给谁)
-    private Double finalScore;
+    // 最终计算出的综合加权得分
+    private double finalScore;
 }
