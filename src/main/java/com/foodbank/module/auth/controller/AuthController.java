@@ -36,14 +36,26 @@ public class AuthController {
 
     private static final String SMS_CODE_PREFIX = "sms:code:";
 
+    // 🚨 注意参数多了一个 @RequestParam String type
     @Operation(summary = "0. 获取短信验证码", description = "生成验证码存入Redis并返回给前端模拟手机弹窗")
     @GetMapping("/send-code")
-    public Result<String> sendSmsCode(@RequestParam String phone) {
+    public Result<String> sendSmsCode(@RequestParam String phone,
+                                      @Parameter(description = "场景：register-注册, forgot-找回密码")
+                                      @RequestParam(defaultValue = "register") String type) {
         if (!StringUtils.hasText(phone) || phone.length() != 11) {
             throw new BusinessException("请输入正确的 11 位手机号码");
         }
+
+        // 🚀 核心优化：把查库校验前置到发短信这里！
+        long count = userService.count(new LambdaQueryWrapper<User>().eq(User::getPhone, phone));
+        if ("register".equals(type) && count > 0) {
+            throw new BusinessException("该手机号已被注册，请直接去登录");
+        } else if ("forgot".equals(type) && count == 0) {
+            throw new BusinessException("该手机号尚未注册，请先注册");
+        }
+
         String redisKey = SMS_CODE_PREFIX + phone;
-        if (Boolean.TRUE.equals(stringRedisTemplate.hasKey(redisKey))) {
+        if (stringRedisTemplate.hasKey(redisKey)) {
             throw new BusinessException("验证码已发送，请不要频繁获取！(1分钟后再试)");
         }
         String code = String.format("%06d", new Random().nextInt(999999));

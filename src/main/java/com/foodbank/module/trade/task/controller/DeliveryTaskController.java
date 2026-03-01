@@ -13,14 +13,15 @@ import org.springframework.web.bind.annotation.*;
 
 @Tag(name = "Task Controller", description = "志愿者任务执行与核销管理")
 @RestController
-@RequestMapping("/trade/task") // 🚨 修复路径前缀
+@RequestMapping("/trade/task")
 public class DeliveryTaskController {
 
     @Autowired
     private IDeliveryTaskService taskService;
 
+    // 🚨 修改点 1：把 /checkout 改为 /complete 配合前端
     @Operation(summary = "3. 确认送达核销任务", description = "志愿者到达目的地后核销，系统自动结算信誉分奖励")
-    @PostMapping("/checkout")
+    @PostMapping("/complete")
     public Result<String> checkOutTask(
             @Parameter(description = "任务ID", required = true) @RequestParam Long taskId) {
         Long myVolunteerId = UserContext.getUserId();
@@ -28,8 +29,9 @@ public class DeliveryTaskController {
         return Result.success("核销成功！信誉分已奖励，感谢您的付出。");
     }
 
+    // 🚨 修改点 2：把 /my-tasks 改为 /my-list 配合前端
     @Operation(summary = "4. 获取我的任务列表", description = "志愿者获取自己当前的历史和执行中的任务")
-    @GetMapping("/my-tasks")
+    @GetMapping("/my-list")
     public Result<Page<MyTaskVO>> getMyTasks(
             @Parameter(description = "任务状态筛选项(1接单 2取货 3完成, 不传则查全部)") @RequestParam(required = false) Byte status,
             @RequestParam(defaultValue = "1") int pageNum,

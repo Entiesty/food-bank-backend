@@ -48,8 +48,10 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         if (!deliveryTask.getVolunteerId().equals(userId)) {
             throw new BusinessException("权限不足：您不是该任务的执行人");
         }
-        if (deliveryTask.getTaskStatus() != 2) {
-            throw new BusinessException("任务当前状态无法核销（需先确认取货）");
+
+        // 🚨 修改点 3：放宽状态机，只要不是已经完成(3)的，都可以直接核销送达
+        if (deliveryTask.getTaskStatus() == 3) {
+            throw new BusinessException("该任务已经核销完毕，请勿重复操作");
         }
 
         deliveryTask.setTaskStatus((byte) 3);
@@ -58,7 +60,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
 
         DispatchOrder dispatchOrder = orderService.getById(deliveryTask.getOrderId());
         if (dispatchOrder != null) {
-            dispatchOrder.setStatus((byte) 2);
+            dispatchOrder.setStatus((byte) 2); // 假设 2 代表订单已被签收
             orderService.updateById(dispatchOrder);
         }
 
@@ -66,7 +68,8 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
     }
 
     private void rewardVolunteerCredit(Long userId, Long orderId) {
-        int rewardPoints = 5;
+        // 🚨 修改点 4：与前端黏土风弹窗的 10 分保持一致
+        int rewardPoints = 10;
         User user = userService.getById(userId);
 
         if (user != null && user.getRole() != null && user.getRole() == 3) {
