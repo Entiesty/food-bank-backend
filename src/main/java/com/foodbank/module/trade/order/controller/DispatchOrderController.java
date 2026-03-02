@@ -58,4 +58,17 @@ public class DispatchOrderController {
         }
         return Result.success(orderService.getAvailableOrderPage(pageNum, pageSize));
     }
+
+    @Operation(summary = "运力熔断：一键转自提", description = "将订单的配送方式从 1(配送) 改为 2(自提)")
+    @PostMapping("/switch-pickup")
+    public Result<Void> switchOrderToPickup(@RequestParam Long orderId) {
+        // 权限校验：只允许管理员(4)触发
+        Byte role = UserContext.getUserRole();
+        if (role != null && role != 4) {
+            throw new BusinessException("越权操作：仅指挥中心可触发运力熔断机制");
+        }
+
+        orderService.switchOrderToPickup(orderId);
+        return Result.success(null, "系统已成功触发熔断，订单转为自提模式");
+    }
 }

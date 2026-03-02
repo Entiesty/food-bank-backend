@@ -83,4 +83,21 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         resultPage.setRecords(voList);
         return resultPage;
     }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void switchOrderToPickup(Long orderId) {
+        DispatchOrder order = this.getById(orderId);
+        // 校验订单是否存在，且不能是已完成(2)或已取消(3)的状态
+        if (order == null || order.getStatus() == 2 || order.getStatus() == 3) {
+            throw new BusinessException("订单状态异常或已被处理，无法转为自提");
+        }
+
+        // 修改为 2（自提模式）
+        order.setDeliveryMethod((byte) 2);
+        boolean updated = this.updateById(order);
+        if (!updated) {
+            throw new BusinessException("运力熔断触发失败，数据库更新异常");
+        }
+    }
 }

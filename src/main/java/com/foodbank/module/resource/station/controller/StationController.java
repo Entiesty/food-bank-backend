@@ -1,5 +1,6 @@
 package com.foodbank.module.resource.station.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.foodbank.common.api.Result;
 import com.foodbank.common.utils.UserContext;
@@ -9,6 +10,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @Tag(name = "Station Controller", description = "物资据点管理接口")
 @RestController
@@ -40,5 +43,14 @@ public class StationController {
         // 分页查询并返回
         Page<Station> pageResult = stationService.page(new Page<>(pageNum, pageSize));
         return Result.success(pageResult);
+    }
+
+    @Operation(summary = "3. 获取全量可用驿站列表", description = "无分页，专供前端下拉框或地图打点使用")
+    @GetMapping("/all")
+    public Result<List<Station>> getAllStations() {
+        // 假设驿站没有被软删除，直接查全量
+        List<Station> list = stationService.list(new LambdaQueryWrapper<Station>()
+                .orderByDesc(Station::getStationId));
+        return Result.success(list);
     }
 }

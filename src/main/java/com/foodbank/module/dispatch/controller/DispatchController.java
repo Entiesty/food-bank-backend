@@ -14,6 +14,8 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import org.springframework.beans.factory.annotation.Value; // 🚨 引入 Value 注解
+import org.springframework.web.bind.annotation.GetMapping; // 🚨 引入 GetMapping
 
 @Tag(name = "Dispatch Controller", description = "核心智能调度指令接口")
 @RestController
@@ -22,6 +24,17 @@ public class DispatchController {
 
     @Autowired
     private DispatchEngineServiceImpl dispatchOrderService;
+
+    // 🚨 1. 读取 yaml 中的配置，如果 yaml 没写，默认给个 30 秒兜底
+    @Value("${foodbank.dispatch.fallback-threshold:30}")
+    private Integer fallbackThreshold;
+
+    // 🚨 2. 新增一个接口，把阈值下发给前端大屏
+    @Operation(summary = "获取调度中心动态配置", description = "读取运力熔断的超时阈值")
+    @GetMapping("/config")
+    public Result<Integer> getDispatchConfig() {
+        return Result.success(fallbackThreshold);
+    }
 
     @Operation(summary = "0. 模拟智能派单计算(答辩演示专用)", description = "直接输入经纬度和需求，不落库，直接返回算法打分与排序结果")
     @PostMapping("/smart-match")

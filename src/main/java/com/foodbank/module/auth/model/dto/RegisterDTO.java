@@ -21,4 +21,7 @@ public class RegisterDTO {
 
     @Schema(description = "短信验证码", requiredMode = Schema.RequiredMode.REQUIRED)
     private String smsCode;
+
+    @Schema(description = "资质证明图片URL")
+    private String identityProofUrl;
 }

@@ -5,10 +5,13 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.foodbank.common.api.Result;
 import com.foodbank.common.utils.UserContext;
 import com.foodbank.module.resource.goods.entity.Goods;
+import com.foodbank.module.resource.goods.model.dto.DonateDTO;
 import com.foodbank.module.resource.goods.service.IGoodsService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -23,7 +26,7 @@ public class GoodsController {
 
     @Operation(summary = "1. 爱心商家捐赠物资入库", description = "商家录入物资并指定存入哪个据点")
     @PostMapping("/donate")
-    public Result<String> donateGoods(@RequestBody Goods goods) {
+    public Result<String> donateGoods(@Validated @RequestBody DonateDTO dto) {
         Long merchantId = UserContext.getUserId();
         Byte role = UserContext.getUserRole();
 
@@ -32,8 +35,12 @@ public class GoodsController {
             return Result.failed("权限不足：仅限认证商家或管理员操作");
         }
 
+        // 🚨 核心修正：使用 DTO 转换，保护底层数据结构
+        Goods goods = new Goods();
+        BeanUtils.copyProperties(dto, goods);
+
         goods.setMerchantId(merchantId);
-        goods.setStatus((byte) 2); // 状态设为 2:已入库可用
+        goods.setStatus((byte) 2); // 维持你原有的设定：状态设为 2(已入库可用)
         goods.setCreateTime(LocalDateTime.now());
 
         boolean saved = goodsService.save(goods);

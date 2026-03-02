@@ -36,7 +36,6 @@ public class AuthController {
 
     private static final String SMS_CODE_PREFIX = "sms:code:";
 
-    // 🚨 注意参数多了一个 @RequestParam String type
     @Operation(summary = "0. 获取短信验证码", description = "生成验证码存入Redis并返回给前端模拟手机弹窗")
     @GetMapping("/send-code")
     public Result<String> sendSmsCode(@RequestParam String phone,
@@ -46,7 +45,6 @@ public class AuthController {
             throw new BusinessException("请输入正确的 11 位手机号码");
         }
 
-        // 🚀 核心优化：把查库校验前置到发短信这里！
         long count = userService.count(new LambdaQueryWrapper<User>().eq(User::getPhone, phone));
         if ("register".equals(type) && count > 0) {
             throw new BusinessException("该手机号已被注册，请直接去登录");
@@ -84,6 +82,11 @@ public class AuthController {
             throw new BusinessException("非法的角色选择！");
         }
 
+        // 🚨 核心逻辑新增：校验商家的资质凭证
+        if (reqRole == 2 && !StringUtils.hasText(dto.getIdentityProofUrl())) {
+            throw new BusinessException("爱心商家入驻必须上传营业执照图片");
+        }
+
         long count = userService.count(new LambdaQueryWrapper<User>().eq(User::getPhone, dto.getPhone()));
         if (count > 0) throw new BusinessException("该手机号已被注册，请直接登录");
 
@@ -94,6 +97,11 @@ public class AuthController {
         user.setRole(reqRole);
         user.setCreditScore(0);
         user.setUserTag(reqRole == 1 ? "ELDERLY" : "NORMAL");
+
+        // 🚨 核心逻辑新增：落库凭证URL，并初始化核验状态为 0 (未核实)
+        user.setIdentityProofUrl(dto.getIdentityProofUrl());
+        user.setIsVerified((byte) 0);
+
         user.setCreateTime(java.time.LocalDateTime.now());
         user.setStatus((byte) (reqRole == 2 ? 0 : 1)); // 商家为 0 待审核
 
@@ -118,7 +126,8 @@ public class AuthController {
             throw new BusinessException("该账号已被系统封禁或尚未激活");
         }
 
-        if (user.getRole() != 1 && user.getRole() != 3 && user.getRole() != 4) {
+        // 🚨 漏洞修复：移除了对 role == 2 的非法拦截！允许 1,2,3,4 均可登录
+        if (user.getRole() < 1 || user.getRole() > 4) {
             throw new BusinessException("权限不足：系统暂未对该角色开放登录");
         }
 

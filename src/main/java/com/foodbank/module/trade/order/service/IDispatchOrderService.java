@@ -17,4 +17,9 @@ public interface IDispatchOrderService extends IService<DispatchOrder> {
      * 🚀 新增：获取待抢单的分页列表 (抢单大厅)
      */
     Page<AvailableOrderVO> getAvailableOrderPage(int pageNum, int pageSize);
+
+    /**
+     * 🚀 运力熔断：一键转自提
+     */
+    void switchOrderToPickup(Long orderId);
 }

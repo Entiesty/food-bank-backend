@@ -72,3 +72,20 @@ springdoc:
 amap:
   key: 8166896745a936d57199d8fa0590d1c0
   url: https://restapi.amap.com/v3/direction/riding # 骑行路径规划 API
+
+minio:
+  endpoint: http://localhost:9000
+  access-key: admin
+  secret-key: password123
+  bucket-name: foodbank
+
+logging:
+  pattern:
+    # 将时间格式修改为直观的 年-月-日 时:分:秒.毫秒
+    dateformat: yyyy-MM-dd HH:mm:ss.SSS
+
+# 业务自定义配置
+foodbank:
+  dispatch:
+    # 运力熔断兜底超时阈值（单位：秒）。演示环境用 30，生产环境可以改为 900 (15分钟)
+    fallback-threshold: 35
