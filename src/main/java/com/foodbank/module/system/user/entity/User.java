@@ -76,4 +76,8 @@ public class User implements Serializable {
 
     @TableField("create_time")
     private LocalDateTime createTime;
+
+    @Schema(description = "用户头像(MinIO URL)")
+    @TableField("avatar")
+    private String avatar;
 }

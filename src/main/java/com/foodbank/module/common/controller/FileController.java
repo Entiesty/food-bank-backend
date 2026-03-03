@@ -32,7 +32,10 @@ public class FileController {
 
             // 生成唯一文件名
             String originalFilename = file.getOriginalFilename();
-            String ext = originalFilename.substring(originalFilename.lastIndexOf("."));
+            String ext = null;
+            if (originalFilename != null) {
+                ext = originalFilename.substring(originalFilename.lastIndexOf("."));
+            }
             String fileName = UUID.randomUUID().toString().replace("-", "") + ext;
 
             // 上传到 MinIO

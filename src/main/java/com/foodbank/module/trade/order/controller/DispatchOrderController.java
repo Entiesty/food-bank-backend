@@ -71,4 +71,22 @@ public class DispatchOrderController {
         orderService.switchOrderToPickup(orderId);
         return Result.success(null, "系统已成功触发熔断，订单转为自提模式");
     }
+
+    @Operation(summary = "全盘订单流转 (管理员视角)", description = "支持多条件筛选的分页查询所有订单")
+    @GetMapping("/admin-page")
+    public Result<Page<DispatchOrder>> getAdminOrderPage(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize,
+            @RequestParam(required = false) String orderSn,
+            @RequestParam(required = false) Byte status,
+            @RequestParam(required = false) Byte deliveryMethod) {
+
+        // 鉴权：只有管理员(Role=4)才能看全盘数据
+        Byte role = UserContext.getUserRole();
+        if (role != null && role != 4) {
+            throw new BusinessException("越权访问：仅限系统管理员查看大账本");
+        }
+
+        return Result.success(orderService.getAdminOrderPage(pageNum, pageSize, orderSn, status, deliveryMethod));
+    }
 }

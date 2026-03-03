@@ -35,7 +35,7 @@ public class MultiFactorDispatchStrategy {
 
         // 1. 实时拉取数据库最新的动态权重配置 (支持平急两用热切换)
         // 假设 id=1 是当前生效的全局配置
-        Config activeConfig = configService.getById(1);
+        Config activeConfig = configService.getCurrentConfig();
         double wDist = activeConfig.getWDist().doubleValue();
         double wUrgency = activeConfig.getWUrgency().doubleValue();
         // 扩展权重：假设剩余权重分配给物资自身属性(库存0.1、临期0.1等，可根据实际情况再到数据库扩充字段)

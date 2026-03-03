@@ -1,55 +1,43 @@
 package com.foodbank.module.system.config.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import java.io.Serializable;
+// 👇 1. 引入 JsonProperty 注解
+import com.fasterxml.jackson.annotation.JsonProperty;
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Data;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import io.swagger.v3.oas.annotations.media.Schema;
-import lombok.Getter;
-import lombok.Setter;
 
-/**
- * <p>
- * 系统动态权重配置表
- * </p>
- *
- * @author Entiesty
- * @since 2026-02-26
- */
-@Getter
-@Setter
+@Data
 @TableName("sys_config")
-@Schema(name = "Config", description = "系统动态权重配置表")
-public class Config implements Serializable {
+@Schema(description = "系统动态权重与模式配置表")
+public class Config {
 
-    private static final long serialVersionUID = 1L;
-
-    @TableId(value = "id", type = IdType.AUTO)
+    @TableId(type = IdType.AUTO)
     private Integer id;
 
-    @Schema(description = "模式: NORMAL-平时, EMERGENCY-急时")
-    @TableField("sys_mode")
+    @Schema(description = "大盘模式: NORMAL, EMERGENCY")
     private String sysMode;
 
-    @Schema(description = "距离权重")
-    @TableField("w_dist")
+    // 👇 2. 强制指定返回给前端的 JSON 字段名（保持驼峰）
+    @JsonProperty("wDist")
+    @Schema(description = "多因子权重-距离偏好")
     private BigDecimal wDist;
 
-    @Schema(description = "紧急度权重")
-    @TableField("w_urgency")
+    @JsonProperty("wUrgency")
+    @Schema(description = "多因子权重-紧急度偏好")
     private BigDecimal wUrgency;
 
-    @Schema(description = "信誉分权重")
-    @TableField("w_credit")
+    @JsonProperty("wCredit")
+    @Schema(description = "多因子权重-骑手信誉偏好")
     private BigDecimal wCredit;
 
-    @Schema(description = "身份标签权重(如老人优先)")
-    @TableField("w_tag")
+    @JsonProperty("wTag")
+    @Schema(description = "多因子权重-弱势群体身份偏好")
     private BigDecimal wTag;
 
-    @TableField("update_time")
     private LocalDateTime updateTime;
 }

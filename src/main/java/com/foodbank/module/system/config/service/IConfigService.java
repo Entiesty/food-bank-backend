@@ -1,16 +1,10 @@
 package com.foodbank.module.system.config.service;
 
-import com.foodbank.module.system.config.entity.Config;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.foodbank.module.system.config.entity.Config;
+import com.foodbank.module.system.config.model.dto.ConfigUpdateDTO;
 
-/**
- * <p>
- * 系统动态权重配置表 服务类
- * </p>
- *
- * @author Entiesty
- * @since 2026-02-26
- */
 public interface IConfigService extends IService<Config> {
-
+    Config getCurrentConfig();
+    void updateEngineConfig(ConfigUpdateDTO dto);
 }

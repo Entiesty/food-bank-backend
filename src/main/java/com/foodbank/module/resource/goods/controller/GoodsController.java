@@ -6,6 +6,7 @@ import com.foodbank.common.api.Result;
 import com.foodbank.common.utils.UserContext;
 import com.foodbank.module.resource.goods.entity.Goods;
 import com.foodbank.module.resource.goods.model.dto.DonateDTO;
+import com.foodbank.module.resource.goods.model.vo.MerchantGoodsVO;
 import com.foodbank.module.resource.goods.service.IGoodsService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -35,16 +36,17 @@ public class GoodsController {
             return Result.failed("权限不足：仅限认证商家或管理员操作");
         }
 
-        // 🚨 核心修正：使用 DTO 转换，保护底层数据结构
         Goods goods = new Goods();
         BeanUtils.copyProperties(dto, goods);
 
         goods.setMerchantId(merchantId);
-        goods.setStatus((byte) 2); // 维持你原有的设定：状态设为 2(已入库可用)
+
+        // 🚨 业务逻辑修正：捐赠初始状态设为 0 (待取货)，配合溯源状态机与撤销功能
+        goods.setStatus((byte) 0);
         goods.setCreateTime(LocalDateTime.now());
 
         boolean saved = goodsService.save(goods);
-        return saved ? Result.success("感谢您的捐赠！物资已成功入库。") : Result.failed("入库失败");
+        return saved ? Result.success("感谢您的捐赠！物资已成功录入大盘。") : Result.failed("入库失败");
     }
 
     @Operation(summary = "2. 分页查询据点可用库存", description = "按据点ID或物资类型过滤查询")
@@ -56,10 +58,30 @@ public class GoodsController {
             @RequestParam(defaultValue = "10") int pageSize) {
 
         LambdaQueryWrapper<Goods> queryWrapper = new LambdaQueryWrapper<>();
-        queryWrapper.eq(Goods::getStatus, 2); // 只查可用的
+        queryWrapper.eq(Goods::getStatus, 2); // 依然只查已入库可用的物资
         if (stationId != null) queryWrapper.eq(Goods::getCurrentStationId, stationId);
         if (category != null) queryWrapper.eq(Goods::getCategory, category);
 
         return Result.success(goodsService.page(new Page<>(pageNum, pageSize), queryWrapper));
+    }
+
+    @Operation(summary = "3. 商家获取自己的捐赠记录", description = "支持按物资名、状态过滤")
+    @GetMapping("/merchant/page")
+    public Result<Page<MerchantGoodsVO>> getMerchantGoodsPage(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize,
+            @RequestParam(required = false) String goodsName,
+            @RequestParam(required = false) Byte status) {
+
+        Long merchantId = UserContext.getUserId();
+        return Result.success(goodsService.getMerchantGoodsPage(pageNum, pageSize, goodsName, status, merchantId));
+    }
+
+    @Operation(summary = "4. 商家撤销捐赠", description = "仅限处于待取货状态的物资")
+    @DeleteMapping("/revoke/{goodsId}")
+    public Result<Void> revokeGoods(@PathVariable Long goodsId) {
+        Long merchantId = UserContext.getUserId();
+        goodsService.revokeGoods(goodsId, merchantId);
+        return Result.success(null, "撤销成功，该物资已从调度大盘中移除");
     }
 }

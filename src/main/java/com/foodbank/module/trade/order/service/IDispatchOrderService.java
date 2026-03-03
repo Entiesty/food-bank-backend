@@ -22,4 +22,9 @@ public interface IDispatchOrderService extends IService<DispatchOrder> {
      * 🚀 运力熔断：一键转自提
      */
     void switchOrderToPickup(Long orderId);
+
+    /**
+     * 获取全盘订单流转列表 (支持多条件复杂检索)
+     */
+    Page<DispatchOrder> getAdminOrderPage(int pageNum, int pageSize, String orderSn, Byte status, Byte deliveryMethod);
 }

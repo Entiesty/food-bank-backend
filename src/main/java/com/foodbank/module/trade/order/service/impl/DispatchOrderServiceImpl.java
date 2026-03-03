@@ -100,4 +100,26 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             throw new BusinessException("运力熔断触发失败，数据库更新异常");
         }
     }
+
+    @Override
+    public Page<DispatchOrder> getAdminOrderPage(int pageNum, int pageSize, String orderSn, Byte status, Byte deliveryMethod) {
+        Page<DispatchOrder> pageReq = new Page<>(pageNum, pageSize);
+        LambdaQueryWrapper<DispatchOrder> wrapper = new LambdaQueryWrapper<>();
+
+        // 动态条件拼接 (如果前端传了值，才加入过滤条件)
+        if (orderSn != null && !orderSn.trim().isEmpty()) {
+            wrapper.like(DispatchOrder::getOrderSn, orderSn); // 模糊检索单号
+        }
+        if (status != null) {
+            wrapper.eq(DispatchOrder::getStatus, status);     // 精确匹配状态
+        }
+        if (deliveryMethod != null) {
+            wrapper.eq(DispatchOrder::getDeliveryMethod, deliveryMethod); // 精确匹配履约模式
+        }
+
+        // 按照创建时间倒序排列 (最新的单子在最前面)
+        wrapper.orderByDesc(DispatchOrder::getCreateTime);
+
+        return this.page(pageReq, wrapper);
+    }
 }
