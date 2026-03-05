@@ -122,4 +122,23 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
 
         return this.page(pageReq, wrapper);
     }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void cancelOrder(Long orderId) {
+        DispatchOrder order = this.getById(orderId);
+        if (order == null) {
+            throw new BusinessException("订单不存在");
+        }
+        // 校验：只有未被接单(0)或调度中(1)的才可以撤销
+        if (order.getStatus() >= 2) {
+            throw new BusinessException("志愿者已送达或订单已完成，无法撤销");
+        }
+        // 将状态修改为 3 (已取消)
+        order.setStatus((byte) 3);
+        boolean updated = this.updateById(order);
+        if (!updated) {
+            throw new BusinessException("撤销失败，请重试");
+        }
+    }
 }

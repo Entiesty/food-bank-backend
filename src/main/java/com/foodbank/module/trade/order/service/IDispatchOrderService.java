@@ -27,4 +27,9 @@ public interface IDispatchOrderService extends IService<DispatchOrder> {
      * 获取全盘订单流转列表 (支持多条件复杂检索)
      */
     Page<DispatchOrder> getAdminOrderPage(int pageNum, int pageSize, String orderSn, Byte status, Byte deliveryMethod);
+
+    /**
+     * 🚀 受赠方撤销尚未被接单的求助
+     */
+    void cancelOrder(Long orderId);
 }

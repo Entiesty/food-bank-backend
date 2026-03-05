@@ -21,4 +21,14 @@ public interface IGoodsService extends IService<Goods> {
      * 商家撤销未被接管的捐赠物资
      */
     void revokeGoods(Long goodsId, Long merchantId);
+
+    /**
+     * 商家开始自行配送 (上锁，防骑手抢单)
+     */
+    void startSelfDelivery(Long goodsId, Long merchantId);
+
+    /**
+     * 商家确认已送达驿站 (核销入库)
+     */
+    void finishSelfDelivery(Long goodsId, Long merchantId);
 }

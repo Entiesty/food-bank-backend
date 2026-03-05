@@ -20,4 +20,7 @@ public class MerchantGoodsVO {
 
     @Schema(description = "关联查询出的目标驿站名称")
     private String stationName;
+
+    private Double stationLon;
+    private Double stationLat;
 }

@@ -89,4 +89,61 @@ public class DispatchOrderController {
 
         return Result.success(orderService.getAdminOrderPage(pageNum, pageSize, orderSn, status, deliveryMethod));
     }
+
+    @Operation(summary = "受赠方查询我的实时求助状态", description = "用于受赠方页面轮询当前未完成的求助单进度")
+    @GetMapping("/my-active-sos")
+    public Result<DispatchOrder> getMyActiveSos() {
+        Long userId = UserContext.getUserId();
+        Byte role = UserContext.getUserRole();
+
+        if (role != null && role != 1) {
+            throw new BusinessException("操作失败：仅受赠方可查询专属求助状态");
+        }
+
+        // 使用 MP 原生 getOne 查询当前登录老人的最新一笔未完成订单
+        LambdaQueryWrapper<DispatchOrder> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(DispatchOrder::getDestId, userId);
+        queryWrapper.in(DispatchOrder::getStatus, 0, 1); // 0-待匹配(异常池/调度中), 1-派送中
+        queryWrapper.orderByDesc(DispatchOrder::getCreateTime);
+        queryWrapper.last("LIMIT 1");
+
+        DispatchOrder activeOrder = orderService.getOne(queryWrapper);
+        return Result.success(activeOrder);
+    }
+
+    @Operation(summary = "受赠方查询历史求助档案", description = "分页查询当前登录老人发起的所有历史订单")
+    @GetMapping("/my-history")
+    public Result<Page<DispatchOrder>> getMyHistoryOrders(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize) {
+
+        Long userId = UserContext.getUserId();
+        Byte role = UserContext.getUserRole();
+
+        // 鉴权：严格限制仅受赠方可查
+        if (role != null && role != 1) {
+            throw new BusinessException("操作失败：仅受赠方可访问求助档案");
+        }
+
+        // 构造分页与查询条件
+        Page<DispatchOrder> pageReq = new Page<>(pageNum, pageSize);
+        LambdaQueryWrapper<DispatchOrder> queryWrapper = new LambdaQueryWrapper<>();
+        // 查询终点是自己的单子 (作为需求方)
+        queryWrapper.eq(DispatchOrder::getDestId, userId);
+        // 按时间倒序，最新的在上面
+        queryWrapper.orderByDesc(DispatchOrder::getCreateTime);
+
+        return Result.success(orderService.page(pageReq, queryWrapper));
+    }
+
+    @Operation(summary = "受赠方撤销求助", description = "将未完成的订单状态置为已取消")
+    @PutMapping("/cancel/{orderId}")
+    public Result<Void> cancelDemandOrder(@PathVariable Long orderId) {
+        Byte role = UserContext.getUserRole();
+        if (role != null && role != 1) {
+            throw new BusinessException("越权操作：仅受赠方可撤销自己的求助");
+        }
+        orderService.cancelOrder(orderId);
+        return Result.success(null, "求助已成功撤销");
+    }
 }

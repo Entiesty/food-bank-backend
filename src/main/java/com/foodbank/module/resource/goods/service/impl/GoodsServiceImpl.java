@@ -65,6 +65,13 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
                 if (station != null) {
                     vo.setStationName(station.getStationName());
                 }
+                // 👇 补充坐标数据
+                if (station.getLongitude() != null) {
+                    vo.setStationLon(station.getLongitude().doubleValue());
+                }
+                if (station.getLatitude() != null) {
+                    vo.setStationLat(station.getLatitude().doubleValue());
+                }
             }
             return vo;
         }).collect(Collectors.toList());
@@ -87,5 +94,35 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
 
         // 物理删除（没进流通的数据直接删）
         this.removeById(goodsId);
+    }
+
+    @Override
+    public void startSelfDelivery(Long goodsId, Long merchantId) {
+        Goods goods = this.getById(goodsId);
+        if (goods == null || !goods.getMerchantId().equals(merchantId)) {
+            throw new BusinessException("物资不存在或无权操作");
+        }
+        if (goods.getStatus() != 0) {
+            throw new BusinessException("该物资已被调度引擎接管或在流转中，无法开启自送！");
+        }
+
+        // 🚨 核心并发锁：将状态改为 4 (商家自送中)，彻底对调度引擎隐身
+        goods.setStatus((byte) 4);
+        this.updateById(goods);
+    }
+
+    @Override
+    public void finishSelfDelivery(Long goodsId, Long merchantId) {
+        Goods goods = this.getById(goodsId);
+        if (goods == null || !goods.getMerchantId().equals(merchantId)) {
+            throw new BusinessException("物资不存在或无权操作");
+        }
+        if (goods.getStatus() != 4) {
+            throw new BusinessException("操作失败，该物资当前未处于自送状态！");
+        }
+
+        // 闭环：入库
+        goods.setStatus((byte) 2);
+        this.updateById(goods);
     }
 }

@@ -8,10 +8,13 @@ import com.foodbank.module.resource.goods.entity.Goods;
 import com.foodbank.module.resource.goods.model.dto.DonateDTO;
 import com.foodbank.module.resource.goods.model.vo.MerchantGoodsVO;
 import com.foodbank.module.resource.goods.service.IGoodsService;
+import com.foodbank.module.trade.order.entity.DispatchOrder;
+import com.foodbank.module.trade.order.service.IDispatchOrderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,28 +28,44 @@ public class GoodsController {
     @Autowired
     private IGoodsService goodsService;
 
+    @Autowired
+    private IDispatchOrderService orderService; // 🚨 顶部记得注入 OrderService
+
     @Operation(summary = "1. 爱心商家捐赠物资入库", description = "商家录入物资并指定存入哪个据点")
     @PostMapping("/donate")
+    @Transactional(rollbackFor = Exception.class) // 🚨 加上事务，保证物资和订单同时成功
     public Result<String> donateGoods(@Validated @RequestBody DonateDTO dto) {
         Long merchantId = UserContext.getUserId();
         Byte role = UserContext.getUserRole();
 
-        // 鉴权：只有商家(2)或管理员(4)可以入库物资
         if (role == null || (role != 2 && role != 4)) {
             return Result.failed("权限不足：仅限认证商家或管理员操作");
         }
 
+        // 1. 保存物资表 (状态为 0 待取货)
         Goods goods = new Goods();
         BeanUtils.copyProperties(dto, goods);
-
         goods.setMerchantId(merchantId);
-
-        // 🚨 业务逻辑修正：捐赠初始状态设为 0 (待取货)，配合溯源状态机与撤销功能
         goods.setStatus((byte) 0);
         goods.setCreateTime(LocalDateTime.now());
+        goodsService.save(goods);
 
-        boolean saved = goodsService.save(goods);
-        return saved ? Result.success("感谢您的捐赠！物资已成功录入大盘。") : Result.failed("入库失败");
+        // 2. 🌟 核心自动化架构：系统瞬间自动生成调度订单，直接广播给全城志愿者！不再需要管理员干预！
+        DispatchOrder autoOrder = new DispatchOrder();
+        autoOrder.setOrderSn("DON-" + System.currentTimeMillis()); // 生成 DON 打头的捐赠单号
+        autoOrder.setOrderType((byte) 1); // 1: 供应单(取货: 商家->据点)
+        autoOrder.setGoodsId(goods.getGoodsId());
+        autoOrder.setRequiredCategory(goods.getCategory());
+        autoOrder.setSourceId(merchantId);
+        autoOrder.setDestId(dto.getCurrentStationId()); // 商家已经选好的目标驿站
+        autoOrder.setDeliveryMethod((byte) 1); // 1: 志愿者配送
+        autoOrder.setUrgencyLevel((byte) 5); // 捐赠单默认中等紧急度
+        autoOrder.setStatus((byte) 0); // 0: 待匹配/待抢单，志愿者大屏立刻就能扫到！
+        autoOrder.setCreateTime(LocalDateTime.now());
+
+        orderService.save(autoOrder);
+
+        return Result.success("感谢您的捐赠！系统已自动生成运单并广播给全城骑士。");
     }
 
     @Operation(summary = "2. 分页查询据点可用库存", description = "按据点ID或物资类型过滤查询")
@@ -83,5 +102,21 @@ public class GoodsController {
         Long merchantId = UserContext.getUserId();
         goodsService.revokeGoods(goodsId, merchantId);
         return Result.success(null, "撤销成功，该物资已从调度大盘中移除");
+    }
+
+    @Operation(summary = "5. 商家开始自行配送", description = "状态设为4，锁定物资防止骑手抢单")
+    @PutMapping("/start-self-delivery/{goodsId}")
+    public Result<Void> startSelfDelivery(@PathVariable Long goodsId) {
+        Long merchantId = UserContext.getUserId();
+        goodsService.startSelfDelivery(goodsId, merchantId);
+        return Result.success(null, "物资已锁定！请注意交通安全，到达后请确认送达。");
+    }
+
+    @Operation(summary = "6. 商家确认已送达驿站", description = "状态设为2，正式入库可用")
+    @PutMapping("/finish-self-delivery/{goodsId}")
+    public Result<Void> finishSelfDelivery(@PathVariable Long goodsId) {
+        Long merchantId = UserContext.getUserId();
+        goodsService.finishSelfDelivery(goodsId, merchantId);
+        return Result.success(null, "物资已成功入库，感谢您的亲力亲为！");
     }
 }

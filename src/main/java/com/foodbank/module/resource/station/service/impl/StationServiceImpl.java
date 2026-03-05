@@ -5,6 +5,7 @@ import com.foodbank.common.constant.RedisKeyConstant;
 import com.foodbank.common.exception.BusinessException;
 import com.foodbank.module.resource.station.entity.Station;
 import com.foodbank.module.resource.station.mapper.StationMapper;
+import com.foodbank.module.resource.station.model.vo.StationRecommendVO;
 import com.foodbank.module.resource.station.service.IStationService;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -17,7 +18,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Random;
 
 /**
  * 物资据点服务实现类 (整合 Redis GEO 空间算法)
@@ -29,9 +32,6 @@ public class StationServiceImpl extends ServiceImpl<StationMapper, Station> impl
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
 
-    /**
-     * 项目启动时自动执行：缓存预热 (Cache Warming)
-     */
     @PostConstruct
     public void initStationGeoToRedis() {
         log.info("开始同步据点地理位置信息到 Redis GEO...");
@@ -68,23 +68,15 @@ public class StationServiceImpl extends ServiceImpl<StationMapper, Station> impl
         );
     }
 
-    /**
-     * 🚨 核心双写同步逻辑：新增据点
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean addStationAndSyncGeo(Station station) {
-        // 1. 先落库 MySQL
         boolean saved = this.save(station);
-        if (!saved) {
-            throw new BusinessException("新增据点失败");
-        }
+        if (!saved) throw new BusinessException("新增据点失败");
 
-        // 2. 立即同步坐标到 Redis Geo 缓存池
         if (station.getLongitude() != null && station.getLatitude() != null) {
             try {
                 Point point = new Point(station.getLongitude().doubleValue(), station.getLatitude().doubleValue());
-                // 注意：因为上面注入的是 StringRedisTemplate，所以 Member 必须转化为 String
                 stringRedisTemplate.opsForGeo().add(
                         RedisKeyConstant.STATION_GEO_KEY,
                         point,
@@ -93,10 +85,53 @@ public class StationServiceImpl extends ServiceImpl<StationMapper, Station> impl
                 log.info("🌐 新增据点 [{}] 成功，已实时同步至 Redis Geo 缓存池", station.getStationName());
             } catch (Exception e) {
                 log.error("🚨 同步据点至 Redis Geo 失败: {}", e.getMessage());
-                // 抛出异常触发 @Transactional 回滚，确保强一致性
                 throw new BusinessException("地理位置缓存同步失败，请检查系统状态");
             }
         }
         return true;
+    }
+
+    @Override
+    public List<StationRecommendVO> getRecommendStations(Double userLon, Double userLat) {
+        List<Station> stations = this.list();
+        List<StationRecommendVO> voList = new ArrayList<>();
+
+        for (Station st : stations) {
+            StationRecommendVO vo = new StationRecommendVO();
+            vo.setStationId(st.getStationId());
+            vo.setStationName(st.getStationName());
+            vo.setAddress(st.getAddress());
+
+            // 🚨 真实 LBS 计算：如果前端传了商家的经纬度，且驿站也有经纬度
+            if (userLon != null && userLat != null && st.getLongitude() != null && st.getLatitude() != null) {
+                double dist = calculateDistance(userLat, userLon, st.getLatitude().doubleValue(), st.getLongitude().doubleValue());
+                vo.setRawDistance(dist);
+                vo.setDistance(String.format("%.2f", dist) + "km");
+            } else {
+                // 如果没有拿到定位，距离未知，放到列表最后面
+                vo.setRawDistance(Double.MAX_VALUE);
+                vo.setDistance("距离未知");
+            }
+            voList.add(vo);
+        }
+
+        // 按真实物理距离从近到远排序
+        voList.sort(Comparator.comparing(StationRecommendVO::getRawDistance));
+
+        return voList;
+    }
+
+    /**
+     * 📐 经典的 Haversine 公式：计算地球上两点之间的真实直线距离 (单位: 公里)
+     */
+    private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+        final int R = 6371; // 地球半径(km)
+        double latDistance = Math.toRadians(lat2 - lat1);
+        double lonDistance = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
     }
 }
