@@ -47,4 +47,8 @@ public class CreditLog implements Serializable {
 
     @TableField("create_time")
     private LocalDateTime createTime;
+
+    // 👇 加上这个虚拟字段，用来装前端需要的真实订单编号
+    @TableField(exist = false)
+    private String orderSn;
 }

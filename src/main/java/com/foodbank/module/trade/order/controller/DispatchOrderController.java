@@ -20,7 +20,7 @@ import java.util.List;
 
 @Tag(name = "Order Controller", description = "调度订单查询与管理")
 @RestController
-@RequestMapping("/trade/order") // 🚨 修复路径前缀
+@RequestMapping("/trade/order")
 public class DispatchOrderController {
 
     @Autowired
@@ -29,12 +29,10 @@ public class DispatchOrderController {
     @Operation(summary = "获取大屏待处理订单", description = "全量获取待匹配的求助单(SOS)与捐赠入库单(DON)")
     @GetMapping("/pending-list")
     public Result<List<DispatchOrder>> getPendingOrders() {
-        LambdaQueryWrapper<DispatchOrder> queryWrapper = new LambdaQueryWrapper<>();
-        // 🚨 撤销之前的 SOS- 封印！现在只要是状态为 0 (待处理) 的单子，大屏全都要！
-        queryWrapper.eq(DispatchOrder::getStatus, 0)
-                .orderByAsc(DispatchOrder::getCreateTime);
-
-        return Result.success(orderService.list(queryWrapper));
+        // 🚨 终极核心修复：不再直接用 Mybatis-Plus 去查数据库！
+        // 而是调用我们在 Service 中写好的 getPendingOrdersForMap() 方法。
+        // 这个方法在返回数据前，会触发“翻译官”，把真实的商家名和驿站名拼接到 targetName 和 sourceName 中！
+        return Result.success(orderService.getPendingOrdersForMap());
     }
 
     @Operation(summary = "受赠方发布紧急求助/物资需求")
@@ -105,7 +103,7 @@ public class DispatchOrderController {
         // 使用 MP 原生 getOne 查询当前登录老人的最新一笔未完成订单
         LambdaQueryWrapper<DispatchOrder> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(DispatchOrder::getDestId, userId);
-        queryWrapper.in(DispatchOrder::getStatus, 0, 1); // 0-待匹配(异常池/调度中), 1-派送中
+        queryWrapper.in(DispatchOrder::getStatus, 0, 1); // 0-待匹配(异常qs池/调度中), 1-派送中
         queryWrapper.orderByDesc(DispatchOrder::getCreateTime);
         queryWrapper.last("LIMIT 1");
 

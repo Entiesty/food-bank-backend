@@ -8,6 +8,8 @@ import com.foodbank.module.system.user.entity.CreditLog;
 import com.foodbank.module.system.user.entity.User;
 import com.foodbank.module.system.user.service.ICreditLogService;
 import com.foodbank.module.system.user.service.IUserService;
+import com.foodbank.module.trade.order.entity.DispatchOrder;
+import com.foodbank.module.trade.order.service.IDispatchOrderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +28,10 @@ public class VolunteerController {
     @Autowired
     private ICreditLogService creditLogService;
 
+    // 🚨 引入订单服务，用来查真实的订单编号
+    @Autowired
+    private IDispatchOrderService orderService;
+
     @Operation(summary = "1. 获取当前志愿者的信誉分看板数据")
     @GetMapping("/dashboard")
     public Result<Map<String, Object>> getCreditDashboard() {
@@ -34,7 +40,7 @@ public class VolunteerController {
 
         int currentScore = user.getCreditScore() != null ? user.getCreditScore() : 100;
 
-        // 计算击败了全城多少百分比的志愿者 (极其真实的业务逻辑)
+        // 计算击败了全城多少百分比的志愿者
         long totalVolunteers = userService.count(new LambdaQueryWrapper<User>().eq(User::getRole, 3));
         long lowerScoreCount = userService.count(new LambdaQueryWrapper<User>()
                 .eq(User::getRole, 3)
@@ -59,14 +65,25 @@ public class VolunteerController {
         queryWrapper.eq(CreditLog::getUserId, userId)
                 .orderByDesc(CreditLog::getCreateTime);
 
-        return Result.success(creditLogService.page(new Page<>(pageNum, pageSize), queryWrapper));
+        Page<CreditLog> pageRes = creditLogService.page(new Page<>(pageNum, pageSize), queryWrapper);
+
+        // 🚨 核心真数据注入：拿着 order_id 去查真实的 order_sn
+        for (CreditLog log : pageRes.getRecords()) {
+            if (log.getOrderId() != null) {
+                DispatchOrder order = orderService.getById(log.getOrderId());
+                if (order != null) {
+                    log.setOrderSn(order.getOrderSn()); // 把真实的单号塞进去！
+                }
+            }
+        }
+
+        return Result.success(pageRes);
     }
 
-    // 动态称号引擎
     private String getLevelName(Integer score) {
         if (score < 120) return "青铜微光";
         if (score < 200) return "白银先锋";
         if (score < 300) return "黄金卫士";
-        return "钻石守护者"; // 顶级称号
+        return "钻石守护者";
     }
 }

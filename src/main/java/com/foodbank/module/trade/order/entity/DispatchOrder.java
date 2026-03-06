@@ -66,4 +66,15 @@ public class DispatchOrder implements Serializable {
     @Schema(description = "物资数量/件数")
     @TableField("goods_count")
     private Integer goodsCount;
+
+    @TableField(exist = false)
+    private String sourceName;
+    @TableField(exist = false)
+    private String targetName;
+
+    // 👇 追加这两个字段，用来接收真实的起点经纬度
+    @TableField(exist = false)
+    private BigDecimal sourceLon;
+    @TableField(exist = false)
+    private BigDecimal sourceLat;
 }

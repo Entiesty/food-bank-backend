@@ -6,6 +6,8 @@ import com.foodbank.module.trade.order.entity.DispatchOrder;
 import com.foodbank.module.dispatch.model.dto.DemandPublishDTO;
 import com.foodbank.module.trade.order.model.vo.AvailableOrderVO;
 
+import java.util.List;
+
 public interface IDispatchOrderService extends IService<DispatchOrder> {
 
     /**
@@ -32,4 +34,9 @@ public interface IDispatchOrderService extends IService<DispatchOrder> {
      * 🚀 受赠方撤销尚未被接单的求助
      */
     void cancelOrder(Long orderId);
+
+    /**
+     * 🚀 新增：专供调度大屏获取待处理订单（附带起终点名字）
+     */
+    List<DispatchOrder> getPendingOrdersForMap();
 }
