@@ -38,13 +38,12 @@ public class AdminController {
     @Operation(summary = "1. 获取待审核商家列表")
     @GetMapping("/merchant/pending")
     public Result<List<User>> getPendingMerchants() {
-        checkAdminPermission(); // 🚨 权限防线
+        checkAdminPermission();
 
         LambdaQueryWrapper<User> query = new LambdaQueryWrapper<>();
-        query.eq(User::getRole, 2).eq(User::getStatus, 0); // 角色2(商家)，状态0(待审核)
+        query.eq(User::getRole, 2).eq(User::getStatus, 0);
         List<User> list = userService.list(query);
 
-        // 🚨 核心修正：数据脱敏，严防密码 Hash 泄露给前端
         list.forEach(u -> u.setPassword(null));
         return Result.success(list);
     }
@@ -59,7 +58,6 @@ public class AdminController {
             throw new BusinessException("非法操作：目标商家不存在");
         }
 
-        // 🚨 核心修正：同时更新 status(登录权) 和 is_verified(资质核验标识)
         byte newStatus = pass == 1 ? (byte) 1 : (byte) -1;
         byte newVerified = pass == 1 ? (byte) 1 : (byte) 0;
 
@@ -94,7 +92,6 @@ public class AdminController {
 
         Page<User> result = userService.page(page, query);
 
-        // 🚨 数据脱敏
         result.getRecords().forEach(u -> u.setPassword(null));
         return Result.success(result);
     }
@@ -118,12 +115,20 @@ public class AdminController {
     public Result<Void> updateUserCredit(@RequestParam Long userId, @RequestParam Integer scoreChange) {
         checkAdminPermission();
 
-        // 🚨 核心修正：利用 SQL 的原子性直接加减 (credit_score = credit_score + ?)，防止并发读写引发的分数覆盖
         boolean success = userService.update(new LambdaUpdateWrapper<User>()
                 .eq(User::getUserId, userId)
                 .setSql("credit_score = credit_score + " + scoreChange));
 
         if (!success) throw new BusinessException("信誉分干预失败");
         return Result.success(null, "信誉分人工干预已生效");
+    }
+
+    // 🚨🚨🚨 这里就是我们新增的强制清退接口！
+    @Operation(summary = "6. 强制清退违规用户/商家", description = "执行账号逻辑封禁，并熔断其名下未完成的物资和订单")
+    @PutMapping("/user/evict/{userId}")
+    public Result<Void> evictUser(@PathVariable Long userId) {
+        checkAdminPermission();
+        userService.evictUser(userId);
+        return Result.success(null, "强制清退执行成功！该账号已被封禁，其名下未完成的业务已全线熔断。");
     }
 }

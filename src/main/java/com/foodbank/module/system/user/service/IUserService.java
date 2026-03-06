@@ -21,4 +21,9 @@ public interface IUserService extends IService<User> {
      * 获取千人千面角色成就看板数据
      */
     UserDashboardVO getUserDashboardStats(Long userId);
+
+    /**
+     * 🚨 新增：强制清退违规用户（执行逻辑封禁与业务熔断）
+     */
+    void evictUser(Long userId);
 }

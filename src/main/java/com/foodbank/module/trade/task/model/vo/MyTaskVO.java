@@ -3,6 +3,7 @@ package com.foodbank.module.trade.task.model.vo;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Data;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
@@ -18,16 +19,35 @@ public class MyTaskVO {
 
     @Schema(description = "关联订单ID")
     private Long orderId;
+    @Schema(description = "订单编号")
+    private String orderSn;
+
+    @Schema(description = "具体物资名称")
+    private String goodsName;
+    @Schema(description = "物资件数")
+    private Integer goodsCount;
+    @Schema(description = "紧急度(1-10)")
+    private Byte urgencyLevel;
     @Schema(description = "配送物资大类")
     private String requiredCategory;
 
-    @Schema(description = "取货地名称")
-    private String stationName;
-    @Schema(description = "取货地地址")
-    private String stationAddress;
+    // ====== 统一抽象的起点信息 ======
+    @Schema(description = "起点名称")
+    private String sourceName;
+    @Schema(description = "起点地址")
+    private String sourceAddress;
+    @Schema(description = "起点经度")
+    private BigDecimal sourceLon;
+    @Schema(description = "起点纬度")
+    private BigDecimal sourceLat;
 
-    @Schema(description = "送达目的地经度")
-    private java.math.BigDecimal targetLon;
-    @Schema(description = "送达目的地纬度")
-    private java.math.BigDecimal targetLat;
+    // ====== 统一抽象的终点信息 ======
+    @Schema(description = "终点名称")
+    private String targetName;
+    @Schema(description = "终点地址")
+    private String targetAddress;
+    @Schema(description = "终点经度")
+    private BigDecimal targetLon;
+    @Schema(description = "终点纬度")
+    private BigDecimal targetLat;
 }

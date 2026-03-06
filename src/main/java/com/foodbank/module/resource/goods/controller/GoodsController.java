@@ -10,6 +10,8 @@ import com.foodbank.module.resource.goods.model.vo.MerchantGoodsVO;
 import com.foodbank.module.resource.goods.service.IGoodsService;
 import com.foodbank.module.trade.order.entity.DispatchOrder;
 import com.foodbank.module.trade.order.service.IDispatchOrderService;
+import com.foodbank.module.resource.station.entity.Station;
+import com.foodbank.module.resource.station.service.IStationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.BeanUtils;
@@ -29,7 +31,11 @@ public class GoodsController {
     private IGoodsService goodsService;
 
     @Autowired
-    private IDispatchOrderService orderService; // 🚨 顶部记得注入 OrderService
+    private IDispatchOrderService orderService;
+
+    // 🚨 核心注入：我们需要用它来查询驿站坐标
+    @Autowired
+    private IStationService stationService;
 
     @Operation(summary = "1. 爱心商家捐赠物资入库")
     @PostMapping("/donate")
@@ -56,12 +62,21 @@ public class GoodsController {
         autoOrder.setSourceId(merchantId);
         autoOrder.setDestId(dto.getCurrentStationId());
         autoOrder.setDeliveryMethod((byte) 1);
-        autoOrder.setUrgencyLevel((byte) 5);
+
+        // 🚨 核心修复 1：强行将捐赠单的优先级降为 1 (普通集货)
+        autoOrder.setUrgencyLevel((byte) 1);
         autoOrder.setStatus((byte) 0);
 
-        // 🚨🚨 核心补齐：把商家的名称和数量塞给订单
+        // 🚨 核心修复 2：把商家的名称和数量塞给订单
         autoOrder.setGoodsName(goods.getGoodsName());
         autoOrder.setGoodsCount(goods.getStock());
+
+        // 🚨 核心修复 3：补齐终点(驿站)经纬度，防止前端高德地图路线推演报错！
+        Station station = stationService.getById(dto.getCurrentStationId());
+        if (station != null) {
+            autoOrder.setTargetLon(station.getLongitude());
+            autoOrder.setTargetLat(station.getLatitude());
+        }
 
         autoOrder.setCreateTime(LocalDateTime.now());
         orderService.save(autoOrder);

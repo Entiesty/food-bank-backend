@@ -21,6 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -36,7 +37,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
     @Autowired
     private ICreditLogService creditLogService;
     @Autowired
-    private IStationService stationService; // 🚨 注入据点服务用于数据拼装
+    private IStationService stationService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -49,7 +50,6 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
             throw new BusinessException("权限不足：您不是该任务的执行人");
         }
 
-        // 🚨 修改点 3：放宽状态机，只要不是已经完成(3)的，都可以直接核销送达
         if (deliveryTask.getTaskStatus() == 3) {
             throw new BusinessException("该任务已经核销完毕，请勿重复操作");
         }
@@ -60,7 +60,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
 
         DispatchOrder dispatchOrder = orderService.getById(deliveryTask.getOrderId());
         if (dispatchOrder != null) {
-            dispatchOrder.setStatus((byte) 2); // 假设 2 代表订单已被签收
+            dispatchOrder.setStatus((byte) 2);
             orderService.updateById(dispatchOrder);
         }
 
@@ -68,7 +68,6 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
     }
 
     private void rewardVolunteerCredit(Long userId, Long orderId) {
-        // 🚨 修改点 4：与前端黏土风弹窗的 10 分保持一致
         int rewardPoints = 10;
         User user = userService.getById(userId);
 
@@ -102,20 +101,82 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
 
         List<MyTaskVO> voList = taskPage.getRecords().stream().map(task -> {
             DispatchOrder order = orderService.getById(task.getOrderId());
-            Station station = null;
-            if (order != null && order.getSourceId() != null) {
-                station = stationService.getById(order.getSourceId());
+
+            // 初始化起终点信息
+            String sourceName = "未知起点";
+            String sourceAddress = "位置待确认";
+            BigDecimal sourceLon = null;
+            BigDecimal sourceLat = null;
+
+            String targetName = "未知终点";
+            String targetAddress = "位置待确认";
+            BigDecimal targetLon = null;
+            BigDecimal targetLat = null;
+
+            if (order != null) {
+                targetLon = order.getTargetLon();
+                targetLat = order.getTargetLat();
+
+                // 🚨 核心逻辑：红蓝双轨分流判断
+                if (order.getOrderType() != null && order.getOrderType() == 1) {
+                    // 【🔵 捐赠单】 起点(Source)=商家，终点(Dest)=据点
+                    User merchant = userService.getById(order.getSourceId());
+                    if (merchant != null) {
+                        sourceName = merchant.getUsername() + " (爱心商铺)";
+                        sourceAddress = "联系电话: " + merchant.getPhone();
+                        sourceLon = merchant.getCurrentLon();
+                        sourceLat = merchant.getCurrentLat();
+                    }
+
+                    Station station = stationService.getById(order.getDestId());
+                    if (station != null) {
+                        targetName = station.getStationName();
+                        targetAddress = station.getAddress();
+                        targetLon = station.getLongitude();
+                        targetLat = station.getLatitude();
+                    }
+                } else {
+                    // 【🔴 求助单】 起点(Source)=据点，终点(Dest)=受助市民
+                    Station station = stationService.getById(order.getSourceId());
+                    if (station != null) {
+                        sourceName = station.getStationName();
+                        sourceAddress = station.getAddress();
+                        sourceLon = station.getLongitude();
+                        sourceLat = station.getLatitude();
+                    }
+
+                    User recipient = userService.getById(order.getDestId());
+                    if (recipient != null) {
+                        targetName = recipient.getUsername() + " (求助市民)";
+                        targetAddress = "联系电话: " + recipient.getPhone();
+                        // 如果订单没存坐标，用用户表里的实时坐标兜底
+                        if (targetLon == null) targetLon = recipient.getCurrentLon();
+                        if (targetLat == null) targetLat = recipient.getCurrentLat();
+                    }
+                }
             }
+
             return MyTaskVO.builder()
                     .taskId(task.getTaskId())
                     .taskStatus(task.getTaskStatus())
                     .acceptTime(task.getAcceptTime())
                     .orderId(task.getOrderId())
+                    .orderSn(order != null ? order.getOrderSn() : null)
+                    .goodsName(order != null ? order.getGoodsName() : null)
+                    .goodsCount(order != null ? order.getGoodsCount() : null)
+                    .urgencyLevel(order != null ? order.getUrgencyLevel() : null)
                     .requiredCategory(order != null ? order.getRequiredCategory() : "未知")
-                    .targetLon(order != null ? order.getTargetLon() : null)
-                    .targetLat(order != null ? order.getTargetLat() : null)
-                    .stationName(station != null ? station.getStationName() : "未知取货点")
-                    .stationAddress(station != null ? station.getAddress() : "未知地址")
+
+                    // 🚨 注入统一抽象后的起终点数据
+                    .sourceName(sourceName)
+                    .sourceAddress(sourceAddress)
+                    .sourceLon(sourceLon)
+                    .sourceLat(sourceLat)
+                    .targetName(targetName)
+                    .targetAddress(targetAddress)
+                    .targetLon(targetLon)
+                    .targetLat(targetLat)
+
                     .build();
         }).collect(Collectors.toList());
 
