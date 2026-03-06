@@ -26,12 +26,14 @@ public class DispatchOrderController {
     @Autowired
     private IDispatchOrderService orderService;
 
-    @Operation(summary = "获取大屏待抢订单", description = "只查询状态为 0 (待匹配) 的订单，防止出现幽灵订单")
+    @Operation(summary = "获取大屏待处理订单", description = "全量获取待匹配的求助单(SOS)与捐赠入库单(DON)")
     @GetMapping("/pending-list")
     public Result<List<DispatchOrder>> getPendingOrders() {
         LambdaQueryWrapper<DispatchOrder> queryWrapper = new LambdaQueryWrapper<>();
-        queryWrapper.eq(DispatchOrder::getStatus, 0);
-        queryWrapper.orderByDesc(DispatchOrder::getCreateTime);
+        // 🚨 撤销之前的 SOS- 封印！现在只要是状态为 0 (待处理) 的单子，大屏全都要！
+        queryWrapper.eq(DispatchOrder::getStatus, 0)
+                .orderByAsc(DispatchOrder::getCreateTime);
+
         return Result.success(orderService.list(queryWrapper));
     }
 
@@ -136,14 +138,15 @@ public class DispatchOrderController {
         return Result.success(orderService.page(pageReq, queryWrapper));
     }
 
-    @Operation(summary = "受赠方撤销求助", description = "将未完成的订单状态置为已取消")
+    @Operation(summary = "撤销订单", description = "将未完成的订单状态置为已取消（老人与管理员可用）")
     @PutMapping("/cancel/{orderId}")
     public Result<Void> cancelDemandOrder(@PathVariable Long orderId) {
         Byte role = UserContext.getUserRole();
-        if (role != null && role != 1) {
-            throw new BusinessException("越权操作：仅受赠方可撤销自己的求助");
+        // 🚨 核心修复：放行管理员(角色4)的强制取消权限
+        if (role != null && role != 1 && role != 4) {
+            throw new BusinessException("越权操作：仅受赠方或指挥中心可撤销订单");
         }
         orderService.cancelOrder(orderId);
-        return Result.success(null, "求助已成功撤销");
+        return Result.success(null, "订单已成功强制撤销");
     }
 }

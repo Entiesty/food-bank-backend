@@ -15,6 +15,8 @@ import com.foodbank.module.resource.goods.entity.Goods;
 import com.foodbank.module.resource.goods.service.IGoodsService;
 import com.foodbank.module.resource.station.entity.Station;
 import com.foodbank.module.resource.station.service.IStationService;
+import com.foodbank.module.system.user.entity.User; // 🚨 新增引入 User 实体
+import com.foodbank.module.system.user.service.IUserService; // 🚨 新增引入 UserService
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.geo.GeoResults;
@@ -39,11 +41,13 @@ public class DispatchEngineServiceImpl {
     @Autowired
     private MultiFactorDispatchStrategy dispatchStrategy;
 
-    // 🚨 修复1：补充注入 order 和 task 服务
     @Autowired
     private IDispatchOrderService orderService;
     @Autowired
     private IDeliveryTaskService taskService;
+
+    @Autowired
+    private IUserService userService; // 🚨 注入 UserService 用于校验志愿者资质
 
     // ================= 核心业务方法 =================
 
@@ -69,12 +73,12 @@ public class DispatchEngineServiceImpl {
         for (var result : geoResults.getContent()) {
             Long stationId = Long.parseLong(result.getContent().getName());
 
-            // 🚨 核心修复：按【类别】而非具体 ID 查找，且必须是已入库(2)的物资
+            // 按【类别】而非具体 ID 查找，且必须是已入库(2)的物资
             Goods goods = goodsService.getOne(new LambdaQueryWrapper<Goods>()
                     .eq(Goods::getCurrentStationId, stationId)
                     .eq(Goods::getCategory, dispatchOrder.getRequiredCategory())
                     .eq(Goods::getStatus, 2)
-                    .last("LIMIT 1")); // 只要该据点有这个类别的物资就行
+                    .last("LIMIT 1"));
 
             if (goods == null || goods.getStock() <= 0) continue;
 
@@ -87,7 +91,7 @@ public class DispatchEngineServiceImpl {
                 AmapDirectionResponse.Path path = amapClientService.getRidingDistance(originLonLat, destLonLat);
                 candidates.add(DispatchCandidateVO.builder()
                         .station(station)
-                        .goods(goods) // 🚨 别忘了把查到的具体物资塞进去，后续算法要用它的过期时间！
+                        .goods(goods)
                         .distance(path.distance())
                         .duration(path.duration())
                         .currentStock(goods.getStock())
@@ -113,6 +117,17 @@ public class DispatchEngineServiceImpl {
         if (orderId == null || volunteerId == null) {
             throw new BusinessException("订单ID或志愿者ID不能为空");
         }
+
+        // 🚨 核心防御：资质合规性校验
+        User volunteer = userService.getById(volunteerId);
+        if (volunteer == null) {
+            throw new BusinessException("志愿者身份异常，请重新登录");
+        }
+        // 判断 is_verified 字段是否为 1 (已审核通过)
+        if (volunteer.getIsVerified() == null || volunteer.getIsVerified() == 0) {
+            throw new BusinessException("您的志愿者资质尚未通过指挥中心审核，暂无接单权限！");
+        }
+
         log.info("志愿者 [{}] 正在尝试抢夺订单 [{}]", volunteerId, orderId);
 
         // 防线 1：状态机 CAS 乐观锁
@@ -133,7 +148,6 @@ public class DispatchEngineServiceImpl {
             DeliveryTask deliveryTask = new DeliveryTask();
             deliveryTask.setOrderId(orderId);
             deliveryTask.setVolunteerId(volunteerId);
-            // 🚨 修复2：强制转换为 byte 类型，匹配数据库映射
             deliveryTask.setTaskStatus((byte) 1);
             deliveryTask.setVersion(0);
 
@@ -162,7 +176,6 @@ public class DispatchEngineServiceImpl {
             throw new BusinessException("当前任务状态不支持取货操作，请勿重复点击");
         }
 
-        // 🚨 修复3：强制转换为 byte 类型
         deliveryTask.setTaskStatus((byte) 2);
 
         boolean success = taskService.updateById(deliveryTask);

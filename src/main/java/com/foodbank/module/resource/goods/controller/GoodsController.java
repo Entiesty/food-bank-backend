@@ -31,18 +31,15 @@ public class GoodsController {
     @Autowired
     private IDispatchOrderService orderService; // 🚨 顶部记得注入 OrderService
 
-    @Operation(summary = "1. 爱心商家捐赠物资入库", description = "商家录入物资并指定存入哪个据点")
+    @Operation(summary = "1. 爱心商家捐赠物资入库")
     @PostMapping("/donate")
-    @Transactional(rollbackFor = Exception.class) // 🚨 加上事务，保证物资和订单同时成功
+    @Transactional(rollbackFor = Exception.class)
     public Result<String> donateGoods(@Validated @RequestBody DonateDTO dto) {
         Long merchantId = UserContext.getUserId();
         Byte role = UserContext.getUserRole();
+        if (role == null || (role != 2 && role != 4)) return Result.failed("权限不足");
 
-        if (role == null || (role != 2 && role != 4)) {
-            return Result.failed("权限不足：仅限认证商家或管理员操作");
-        }
-
-        // 1. 保存物资表 (状态为 0 待取货)
+        // 1. 保存物资表
         Goods goods = new Goods();
         BeanUtils.copyProperties(dto, goods);
         goods.setMerchantId(merchantId);
@@ -50,19 +47,23 @@ public class GoodsController {
         goods.setCreateTime(LocalDateTime.now());
         goodsService.save(goods);
 
-        // 2. 🌟 核心自动化架构：系统瞬间自动生成调度订单，直接广播给全城志愿者！不再需要管理员干预！
+        // 2. 自动生成调度大屏 DON 单
         DispatchOrder autoOrder = new DispatchOrder();
-        autoOrder.setOrderSn("DON-" + System.currentTimeMillis()); // 生成 DON 打头的捐赠单号
-        autoOrder.setOrderType((byte) 1); // 1: 供应单(取货: 商家->据点)
+        autoOrder.setOrderSn("DON-" + System.currentTimeMillis());
+        autoOrder.setOrderType((byte) 1);
         autoOrder.setGoodsId(goods.getGoodsId());
         autoOrder.setRequiredCategory(goods.getCategory());
         autoOrder.setSourceId(merchantId);
-        autoOrder.setDestId(dto.getCurrentStationId()); // 商家已经选好的目标驿站
-        autoOrder.setDeliveryMethod((byte) 1); // 1: 志愿者配送
-        autoOrder.setUrgencyLevel((byte) 5); // 捐赠单默认中等紧急度
-        autoOrder.setStatus((byte) 0); // 0: 待匹配/待抢单，志愿者大屏立刻就能扫到！
-        autoOrder.setCreateTime(LocalDateTime.now());
+        autoOrder.setDestId(dto.getCurrentStationId());
+        autoOrder.setDeliveryMethod((byte) 1);
+        autoOrder.setUrgencyLevel((byte) 5);
+        autoOrder.setStatus((byte) 0);
 
+        // 🚨🚨 核心补齐：把商家的名称和数量塞给订单
+        autoOrder.setGoodsName(goods.getGoodsName());
+        autoOrder.setGoodsCount(goods.getStock());
+
+        autoOrder.setCreateTime(LocalDateTime.now());
         orderService.save(autoOrder);
 
         return Result.success("感谢您的捐赠！系统已自动生成运单并广播给全城骑士。");

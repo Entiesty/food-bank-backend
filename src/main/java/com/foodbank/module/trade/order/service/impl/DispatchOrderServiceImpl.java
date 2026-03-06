@@ -26,16 +26,15 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
     @Autowired
     private IStationService stationService; // 🚨 注入据点服务，用于关联查询
 
+    // 找到发布需求的方法 publishDemandOrder，将其替换为以下逻辑：
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void publishDemandOrder(DemandPublishDTO dto) {
         Long currentUserId = UserContext.getUserId();
-        if (currentUserId == null) {
-            throw new BusinessException("用户信息获取失败，请重新登录");
-        }
+        if (currentUserId == null) throw new BusinessException("用户信息获取失败，请重新登录");
 
         DispatchOrder dispatchOrder = new DispatchOrder();
-        dispatchOrder.setOrderSn("REQ" + UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase());
+        dispatchOrder.setOrderSn("SOS-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase());
         dispatchOrder.setOrderType((byte) 2);
         dispatchOrder.setDestId(currentUserId);
         dispatchOrder.setRequiredCategory(dto.getRequiredCategory());
@@ -44,10 +43,13 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         dispatchOrder.setTargetLat(dto.getTargetLat());
         dispatchOrder.setStatus((byte) 0);
 
+        // 🚨🚨 核心补齐：把前端传来的具体描述(如果有)或大类，拼接成物资名称
+        String specificName = dto.getDescription() != null ? dto.getDescription() : dto.getRequiredCategory();
+        dispatchOrder.setGoodsName("急需：" + specificName);
+        dispatchOrder.setGoodsCount(1); // 老人求助默认 1 份
+
         boolean saved = this.save(dispatchOrder);
-        if (!saved) {
-            throw new BusinessException("求助发布失败，请稍后重试");
-        }
+        if (!saved) throw new BusinessException("求助发布失败，请稍后重试");
     }
 
     @Override

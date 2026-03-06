@@ -41,12 +41,24 @@ public class UserController {
     @PutMapping("/profile")
     public Result<Void> updateProfile(@Validated @RequestBody UserUpdateDTO dto) {
         Long userId = UserContext.getUserId();
-        boolean success = userService.update(new LambdaUpdateWrapper<User>()
+
+        // 👇 核心修复：使用 MyBatis-Plus 动态更新字段
+        LambdaUpdateWrapper<User> updateWrapper = new LambdaUpdateWrapper<User>()
                 .eq(User::getUserId, userId)
-                .set(User::getUsername, dto.getUsername()));
+                .set(User::getUsername, dto.getUsername());
+
+        // 如果前端传了经纬度，就把它们加入到 UPDATE 语句中
+        if (dto.getCurrentLon() != null) {
+            updateWrapper.set(User::getCurrentLon, dto.getCurrentLon());
+        }
+        if (dto.getCurrentLat() != null) {
+            updateWrapper.set(User::getCurrentLat, dto.getCurrentLat());
+        }
+
+        boolean success = userService.update(updateWrapper);
 
         if (!success) throw new BusinessException("资料更新失败，请重试");
-        return Result.success(null, "资料更新成功！");
+        return Result.success(null, "资料及基站坐标更新成功！");
     }
 
     @Operation(summary = "3. 修改密码")

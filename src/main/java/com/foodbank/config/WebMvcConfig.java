@@ -23,11 +23,15 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/auth/send-code",
                         "/auth/reset-password",
 
+                        // --- 🚨 文件上传模块 (放行注册时的图片上传) ---
+                        "/common/file/upload",  // 新增这一行！
+                        "/common/file/**",      // 稳妥起见，把 common/file 下的都放行
+
                         // --- 数据大屏与通用 ---
                         "/dispatch/dashboard/**",
                         "/resource/station/list",
                         "/favicon.ico",
-                        "/upload/**",
+                        "/upload/**", // 这个可能是你以前本地存储留下的，保留即可
 
                         // --- 接口文档 ---
                         "/doc.html",
