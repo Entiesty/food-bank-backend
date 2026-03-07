@@ -77,4 +77,9 @@ public class DispatchOrder implements Serializable {
     private BigDecimal sourceLon;
     @TableField(exist = false)
     private BigDecimal sourceLat;
+
+    // 🚨 新增：用来接收调度引擎写下的“死亡笔记（异常原因）”
+    @Schema(description = "调度异常原因/滞留标签")
+    @TableField("exception_reason")
+    private String exceptionReason;
 }

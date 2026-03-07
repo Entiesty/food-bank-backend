@@ -19,8 +19,6 @@ public class DemandPublishDTO {
 
     @NotNull(message = "目标纬度不能为空")
     private BigDecimal targetLat;
-
-    // 在原有字段下方增加
-    @NotBlank(message = "细节描述不能为空")
+    
     private String description;
 }

@@ -15,8 +15,8 @@ import com.foodbank.module.resource.goods.entity.Goods;
 import com.foodbank.module.resource.goods.service.IGoodsService;
 import com.foodbank.module.resource.station.entity.Station;
 import com.foodbank.module.resource.station.service.IStationService;
-import com.foodbank.module.system.user.entity.User; // 🚨 新增引入 User 实体
-import com.foodbank.module.system.user.service.IUserService; // 🚨 新增引入 UserService
+import com.foodbank.module.system.user.entity.User;
+import com.foodbank.module.system.user.service.IUserService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.geo.GeoResults;
@@ -47,12 +47,12 @@ public class DispatchEngineServiceImpl {
     private IDeliveryTaskService taskService;
 
     @Autowired
-    private IUserService userService; // 🚨 注入 UserService 用于校验志愿者资质
+    private IUserService userService;
 
     // ================= 核心业务方法 =================
 
     /**
-     * 核心 1：一键智能匹配最优派发据点 (已适配宽泛类别匹配)
+     * 核心 1：一键智能匹配最优派发据点 (已恢复纯净无副作用模式)
      */
     public List<DispatchCandidateVO> smartMatchStations(DispatchOrder dispatchOrder) {
         log.info("📡 启动智能派单匹配，坐标:[{},{}], 需求物资大类:{}, 紧急度:{}",
@@ -63,7 +63,8 @@ public class DispatchEngineServiceImpl {
                 stationService.searchNearbyStations(dispatchOrder.getTargetLon().doubleValue(), dispatchOrder.getTargetLat().doubleValue(), 5.0);
 
         if (geoResults == null || geoResults.getContent().isEmpty()) {
-            throw new BusinessException("附近 5 公里内暂无可用食物银行据点");
+            // 🚨 纯净返回：找不到驿站，直接返回空集合，绝不修改数据库！
+            return new ArrayList<>();
         }
 
         List<DispatchCandidateVO> candidates = new ArrayList<>();
@@ -102,12 +103,15 @@ public class DispatchEngineServiceImpl {
         }
 
         if (candidates.isEmpty()) {
-            throw new BusinessException("附近的据点均无对应类别的库存物资");
+            // 🚨 纯净返回：找不到物资，直接返回空集合，绝不修改数据库！
+            return new ArrayList<>();
         }
 
         // 3. 丢给核心加权算法算分并排序
         return dispatchStrategy.calculateAndRank(candidates, dispatchOrder.getUrgencyLevel());
     }
+
+    // ================= 以下为原有业务方法，保持原样 =================
 
     /**
      * 核心 2：高并发志愿者抢单 (防止超卖)
@@ -118,12 +122,11 @@ public class DispatchEngineServiceImpl {
             throw new BusinessException("订单ID或志愿者ID不能为空");
         }
 
-        // 🚨 核心防御：资质合规性校验
+        // 防御：资质合规性校验
         User volunteer = userService.getById(volunteerId);
         if (volunteer == null) {
             throw new BusinessException("志愿者身份异常，请重新登录");
         }
-        // 判断 is_verified 字段是否为 1 (已审核通过)
         if (volunteer.getIsVerified() == null || volunteer.getIsVerified() == 0) {
             throw new BusinessException("您的志愿者资质尚未通过指挥中心审核，暂无接单权限！");
         }

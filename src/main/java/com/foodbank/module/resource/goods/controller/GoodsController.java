@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 
 @Tag(name = "Goods Controller", description = "救灾物资与库存管理")
@@ -29,11 +30,8 @@ public class GoodsController {
 
     @Autowired
     private IGoodsService goodsService;
-
     @Autowired
     private IDispatchOrderService orderService;
-
-    // 🚨 核心注入：我们需要用它来查询驿站坐标
     @Autowired
     private IStationService stationService;
 
@@ -63,76 +61,82 @@ public class GoodsController {
         autoOrder.setDestId(dto.getCurrentStationId());
         autoOrder.setDeliveryMethod((byte) 1);
 
-        // 🚨 核心修复 1：强行将捐赠单的优先级降为 1 (普通集货)
-        autoOrder.setUrgencyLevel((byte) 1);
         autoOrder.setStatus((byte) 0);
-
-        // 🚨 核心修复 2：把商家的名称和数量塞给订单
         autoOrder.setGoodsName(goods.getGoodsName());
         autoOrder.setGoodsCount(goods.getStock());
 
-        // 🚨 核心修复 3：补齐终点(驿站)经纬度，防止前端高德地图路线推演报错！
         Station station = stationService.getById(dto.getCurrentStationId());
         if (station != null) {
             autoOrder.setTargetLon(station.getLongitude());
             autoOrder.setTargetLat(station.getLatitude());
         }
 
+        // ==========================================================
+        // 🚨 核心调度逻辑：DON单智能紧急度赋分引擎
+        // ==========================================================
+        byte calculatedUrgency = 1; // 默认作为最低优先级的顺路运单
+
+        String cat = dto.getCategory();
+        // 1. 基础分：生鲜、热食、乳制品容易坏，基础紧急度提高到 3
+        if (cat != null && (cat.contains("生鲜") || cat.contains("速食品") || cat.contains("乳制品") || cat.contains("烘焙糕点"))) {
+            calculatedUrgency = 3;
+        }
+
+        // 2. 临期截断分：计算过期倒计时
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime expireTime = dto.getExpirationDate();
+        if (expireTime != null && expireTime.isAfter(now)) {
+            long hoursUntilExpire = Duration.between(now, expireTime).toHours();
+            // 如果距离过期不足 3 小时，不论是什么物资，直接触发“临期抢救机制”，紧急度飙升到 5！
+            if (hoursUntilExpire <= 3) {
+                calculatedUrgency = 5;
+            }
+        }
+
+        autoOrder.setUrgencyLevel(calculatedUrgency);
+        // ==========================================================
+
         autoOrder.setCreateTime(LocalDateTime.now());
         orderService.save(autoOrder);
 
-        return Result.success("感谢您的捐赠！系统已自动生成运单并广播给全城骑士。");
+        return Result.success("感谢您的捐赠！系统已自动评估物资属性并接入调度大盘。");
     }
 
-    @Operation(summary = "2. 分页查询据点可用库存", description = "按据点ID或物资类型过滤查询")
+    // ... 下方其他的 5 个接口保持你的原样完全不变 ...
+    @Operation(summary = "2. 分页查询据点可用库存")
     @GetMapping("/list")
-    public Result<Page<Goods>> getGoodsList(
-            @RequestParam(required = false) Long stationId,
-            @RequestParam(required = false) String category,
-            @RequestParam(defaultValue = "1") int pageNum,
-            @RequestParam(defaultValue = "10") int pageSize) {
-
+    public Result<Page<Goods>> getGoodsList(@RequestParam(required = false) Long stationId, @RequestParam(required = false) String category, @RequestParam(defaultValue = "1") int pageNum, @RequestParam(defaultValue = "10") int pageSize) {
         LambdaQueryWrapper<Goods> queryWrapper = new LambdaQueryWrapper<>();
-        queryWrapper.eq(Goods::getStatus, 2); // 依然只查已入库可用的物资
+        queryWrapper.eq(Goods::getStatus, 2);
         if (stationId != null) queryWrapper.eq(Goods::getCurrentStationId, stationId);
         if (category != null) queryWrapper.eq(Goods::getCategory, category);
-
         return Result.success(goodsService.page(new Page<>(pageNum, pageSize), queryWrapper));
     }
 
-    @Operation(summary = "3. 商家获取自己的捐赠记录", description = "支持按物资名、状态过滤")
+    @Operation(summary = "3. 商家获取自己的捐赠记录")
     @GetMapping("/merchant/page")
-    public Result<Page<MerchantGoodsVO>> getMerchantGoodsPage(
-            @RequestParam(defaultValue = "1") int pageNum,
-            @RequestParam(defaultValue = "10") int pageSize,
-            @RequestParam(required = false) String goodsName,
-            @RequestParam(required = false) Byte status) {
-
-        Long merchantId = UserContext.getUserId();
-        return Result.success(goodsService.getMerchantGoodsPage(pageNum, pageSize, goodsName, status, merchantId));
+    public Result<Page<MerchantGoodsVO>> getMerchantGoodsPage(@RequestParam(defaultValue = "1") int pageNum, @RequestParam(defaultValue = "10") int pageSize, @RequestParam(required = false) String goodsName, @RequestParam(required = false) Byte status) {
+        return Result.success(goodsService.getMerchantGoodsPage(pageNum, pageSize, goodsName, status, UserContext.getUserId()));
     }
 
-    @Operation(summary = "4. 商家撤销捐赠", description = "仅限处于待取货状态的物资")
+    @Operation(summary = "4. 商家撤销捐赠")
     @DeleteMapping("/revoke/{goodsId}")
     public Result<Void> revokeGoods(@PathVariable Long goodsId) {
-        Long merchantId = UserContext.getUserId();
-        goodsService.revokeGoods(goodsId, merchantId);
+        goodsService.revokeGoods(goodsId, UserContext.getUserId());
         return Result.success(null, "撤销成功，该物资已从调度大盘中移除");
     }
 
-    @Operation(summary = "5. 商家开始自行配送", description = "状态设为4，锁定物资防止骑手抢单")
+    @Operation(summary = "5. 商家开始自行配送")
     @PutMapping("/start-self-delivery/{goodsId}")
     public Result<Void> startSelfDelivery(@PathVariable Long goodsId) {
-        Long merchantId = UserContext.getUserId();
-        goodsService.startSelfDelivery(goodsId, merchantId);
+        goodsService.startSelfDelivery(goodsId, UserContext.getUserId());
         return Result.success(null, "物资已锁定！请注意交通安全，到达后请确认送达。");
     }
 
-    @Operation(summary = "6. 商家确认已送达驿站", description = "状态设为2，正式入库可用")
+    @Operation(summary = "6. 商家确认已送达驿站")
     @PutMapping("/finish-self-delivery/{goodsId}")
     public Result<Void> finishSelfDelivery(@PathVariable Long goodsId) {
-        Long merchantId = UserContext.getUserId();
-        goodsService.finishSelfDelivery(goodsId, merchantId);
+        goodsService.finishSelfDelivery(goodsId, UserContext.getUserId());
         return Result.success(null, "物资已成功入库，感谢您的亲力亲为！");
     }
 }

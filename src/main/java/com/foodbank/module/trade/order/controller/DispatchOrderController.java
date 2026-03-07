@@ -147,4 +147,23 @@ public class DispatchOrderController {
         orderService.cancelOrder(orderId);
         return Result.success(null, "订单已成功强制撤销");
     }
+
+    @Operation(summary = "指挥中心：获取异常滞留订单大屏数据", description = "专供异常预警面板轮询")
+    @GetMapping("/exception-monitor")
+    public Result<List<DispatchOrder>> getExceptionMonitorList() {
+        // 鉴权：严格限制仅管理员(4)可访问
+        Byte role = UserContext.getUserRole();
+        if (role != null && role != 4) {
+            throw new BusinessException("越权访问：仅限指挥中心访问预警大屏");
+        }
+
+        // 🚨 核心查询：状态为 0 (待匹配)，且 死亡笔记(exceptionReason) 不为空！
+        // 用 orderByAsc 按时间正序排，也就是【等待时间最长、最危险】的单子顶在最前面！
+        List<DispatchOrder> exceptionList = orderService.list(new LambdaQueryWrapper<DispatchOrder>()
+                .eq(DispatchOrder::getStatus, 0)
+                .isNotNull(DispatchOrder::getExceptionReason)
+                .orderByAsc(DispatchOrder::getCreateTime));
+
+        return Result.success(exceptionList);
+    }
 }

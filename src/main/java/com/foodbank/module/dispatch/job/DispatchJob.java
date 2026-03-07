@@ -1,7 +1,9 @@
 package com.foodbank.module.dispatch.job;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.foodbank.common.exception.BusinessException;
+import com.foodbank.module.resource.goods.entity.Goods;
 import com.foodbank.module.trade.order.entity.DispatchOrder;
 import com.foodbank.module.dispatch.model.vo.DispatchCandidateVO;
 import com.foodbank.module.trade.order.service.IDispatchOrderService;
@@ -13,10 +15,12 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 调度系统大心脏：后台自动化撮配引擎
+ * 调度系统大心脏：后台自动化撮配引擎 & 异常监控雷达
  */
 @Slf4j
 @Component
@@ -28,63 +32,90 @@ public class DispatchJob {
     @Autowired
     private DispatchEngineServiceImpl dispatchOrderService;
 
-    // 🚨 新增注入 GoodsService 用于扣减库存
     @Autowired
     private IGoodsService goodsService;
 
     /**
-     * 每隔 5 秒执行一次扫描
+     * 1. 自动撮合引擎：每隔 5 秒执行一次扫描 (保留你的原逻辑)
      */
     @Scheduled(fixedDelay = 5000)
     @Transactional(rollbackFor = Exception.class)
     public void executeMatchEngine() {
-        // 1. 扫描所有状态为 0 (待匹配) 的需求订单
         List<DispatchOrder> pendingDispatchOrders = orderService.list(new LambdaQueryWrapper<DispatchOrder>()
                 .eq(DispatchOrder::getStatus, 0)
                 .eq(DispatchOrder::getOrderType, 2));
 
-        if (pendingDispatchOrders.isEmpty()) {
-            return;
-        }
-
-        log.info("⚙️ [调度引擎] 发现 {} 个待匹配紧急求助单，开始多因子撮合...", pendingDispatchOrders.size());
+        if (pendingDispatchOrders.isEmpty()) return;
 
         for (DispatchOrder dispatchOrder : pendingDispatchOrders) {
             try {
-                // 2. 调用核心算法选出最优解
                 List<DispatchCandidateVO> bestCandidates = dispatchOrderService.smartMatchStations(dispatchOrder);
-
                 if (bestCandidates != null && !bestCandidates.isEmpty()) {
-                    // 取 Top 1 (得分最高的最优解)
                     DispatchCandidateVO winner = bestCandidates.get(0);
-
-                    // 🚨 核心防线：利用 MySQL 行锁安全扣减库存 (预扣减 1 件)
                     boolean deductSuccess = goodsService.deductStockSafe(winner.getGoods().getGoodsId(), 1);
+                    if (!deductSuccess) continue;
 
-                    if (!deductSuccess) {
-                        log.warn("⚠️ [匹配轮空] 订单:{} | 物资:{} 库存不足或瞬间已被抢占，等待下一轮调度",
-                                dispatchOrder.getOrderSn(), winner.getGoods().getGoodsName());
-                        continue; // 如果扣减失败（比如瞬间被别的线程抢空），直接跳过本订单，下一轮会重新匹配别的据点
-                    }
-
-                    // 3. 扣减成功后，将最优解回写到订单中，并将状态改为 1 (调度中)
                     dispatchOrder.setGoodsId(winner.getGoods().getGoodsId());
                     dispatchOrder.setSourceId(winner.getStation().getStationId());
                     dispatchOrder.setStatus((byte) 1);
-
-                    boolean updated = orderService.updateById(dispatchOrder);
-                    if (updated) {
-                        log.info("✅ [匹配成功] 订单:{} | 最优据点:{} | 选定物资:{} | 综合得分:{}",
-                                dispatchOrder.getOrderSn(),
-                                winner.getStation().getStationName(),
-                                winner.getGoods().getGoodsName(),
-                                String.format("%.4f", winner.getFinalScore()));
-                    }
+                    orderService.updateById(dispatchOrder);
                 }
-            } catch (BusinessException be) {
-                log.warn("⚠️ [匹配轮空] 订单:{} 原因:{}", dispatchOrder.getOrderSn(), be.getMessage());
             } catch (Exception e) {
                 log.error("❌ [匹配异常] 订单:{} 发生未知错误: ", dispatchOrder.getOrderSn(), e);
+            }
+        }
+    }
+
+    /**
+     * 🚨 2. 异常监控雷达 (全新架构)：每分钟第0秒扫描一次，抓出滞留单！
+     */
+    @Scheduled(cron = "0 * * * * ?")
+    public void monitorExceptionOrders() {
+        // 只查还没匹配出去的求助单
+        List<DispatchOrder> pendingOrders = orderService.list(new LambdaQueryWrapper<DispatchOrder>()
+                .eq(DispatchOrder::getStatus, 0)
+                .eq(DispatchOrder::getOrderType, 2));
+
+        if (pendingOrders.isEmpty()) return;
+
+        LocalDateTime now = LocalDateTime.now();
+
+        for (DispatchOrder order : pendingOrders) {
+            if (order.getCreateTime() == null) continue;
+
+            long minutes = Duration.between(order.getCreateTime(), now).toMinutes();
+
+            // 核心逻辑：去全局物资库查查，老人家要的东西到底还有没有库存？
+            long stockCount = goodsService.count(new LambdaQueryWrapper<Goods>()
+                    .eq(Goods::getCategory, order.getRequiredCategory())
+                    .eq(Goods::getStatus, 2));
+
+            String currentReason = null;
+
+            // 🚨 如果全城都没货了，0分钟直接触发红色警报！
+            if (stockCount == 0) {
+                currentReason = "全城据点均无 [" + order.getRequiredCategory() + "] 库存";
+            }
+            // ⚠️ 如果有货，但卡了超过 3 分钟还没志愿者接，说明运力不足
+            else if (minutes >= 3) {
+                currentReason = "滞留超过3分钟，周边可能暂无活跃志愿者响应";
+            }
+
+            if (currentReason != null) {
+                // 如果是新警报，写库并通知大屏！
+                if (!currentReason.equals(order.getExceptionReason())) {
+                    order.setExceptionReason(currentReason);
+                    orderService.updateById(order);
+                    log.warn("🚨 [异常雷达触发] 订单 {} 被拦截，原因: {}", order.getOrderSn(), currentReason);
+                }
+            } else {
+                // ✨ 自动自愈：如果有货了且有人接了，自动清空异常！
+                if (order.getExceptionReason() != null) {
+                    orderService.update(new LambdaUpdateWrapper<DispatchOrder>()
+                            .eq(DispatchOrder::getOrderId, order.getOrderId())
+                            .set(DispatchOrder::getExceptionReason, null));
+                    log.info("✨ [系统自愈] 订单 {} 恢复正常，警报解除！", order.getOrderSn());
+                }
             }
         }
     }
