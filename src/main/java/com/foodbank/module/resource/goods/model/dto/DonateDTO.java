@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @Schema(description = "商家捐赠物资请求体")
@@ -34,4 +35,12 @@ public class DonateDTO {
     @NotNull(message = "接收驿站不能为空")
     @Schema(description = "捐入的社区驿站 ID")
     private Long currentStationId;
+
+    // 🚨 接收商家前端勾选的标签数组
+    @Schema(description = "物资特征标签数组")
+    private java.util.List<String> tags;
+
+    // 🚨 新增：接收定向捐赠的目标求救单 ID (平时普通捐赠时该字段为 null)
+    @Schema(description = "定向响应的紧急求救单ID")
+    private Long targetOrderId;
 }

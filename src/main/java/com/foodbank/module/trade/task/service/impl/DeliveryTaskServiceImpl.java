@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.foodbank.common.exception.BusinessException;
+import com.foodbank.module.resource.goods.service.IGoodsService;
 import com.foodbank.module.resource.station.entity.Station;
 import com.foodbank.module.resource.station.service.IStationService;
 import com.foodbank.module.system.user.entity.CreditLog;
@@ -25,12 +26,14 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.springframework.context.annotation.Lazy; // 🚨 必须引入
 
 @Slf4j
 @Service
 public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, DeliveryTask> implements IDeliveryTaskService {
 
     @Autowired
+    @Lazy
     private IDispatchOrderService orderService;
     @Autowired
     private IUserService userService;
@@ -39,9 +42,13 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
     @Autowired
     private IStationService stationService;
 
+    @Autowired
+    private IGoodsService goodsService; // 🚨 注入物资服务
+
+    // 🚀 核心核销逻辑：带图片参数
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void completeTask(Long taskId, Long userId) {
+    public void completeTask(Long taskId, Long userId, String proofImage) {
         DeliveryTask deliveryTask = this.getById(taskId);
         if (deliveryTask == null) {
             throw new BusinessException("未找到该配送任务");
@@ -49,21 +56,44 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         if (!deliveryTask.getVolunteerId().equals(userId)) {
             throw new BusinessException("权限不足：您不是该任务的执行人");
         }
-
         if (deliveryTask.getTaskStatus() == 3) {
             throw new BusinessException("该任务已经核销完毕，请勿重复操作");
         }
 
+        // 1. 保存现场核销照片
+        if (proofImage != null && !proofImage.isEmpty()) {
+            deliveryTask.setProofImage(proofImage);
+        }
+
+        // 2. 扭转任务状态为：已完成 (3)
         deliveryTask.setTaskStatus((byte) 3);
         deliveryTask.setCompleteTime(LocalDateTime.now());
         this.updateById(deliveryTask);
 
+        // 3. 扭转订单状态，并触发物资入库联动！
         DispatchOrder dispatchOrder = orderService.getById(deliveryTask.getOrderId());
         if (dispatchOrder != null) {
+            // 订单状态变更为：已送达 (2)
             dispatchOrder.setStatus((byte) 2);
             orderService.updateById(dispatchOrder);
+
+            // 🚀 终极闭环：物资状态联动更新 (入库引擎)
+            if (dispatchOrder.getGoodsId() != null) {
+                com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(dispatchOrder.getGoodsId());
+                if (goods != null) {
+                    // 将物资状态变更为 2 (已入库/驿站可用)
+                    goods.setStatus((byte) 2);
+                    // 确保物资当前所在的驿站 ID 被正确更新为订单的目的地(驿站) ID
+                    goods.setCurrentStationId(dispatchOrder.getDestId());
+
+                    // 执行更新落库
+                    goodsService.updateById(goods);
+                    log.info("📦 物理世界同步完成：物资 [{}] 已正式入库至驿站 ID:[{}]", goods.getGoodsName(), dispatchOrder.getDestId());
+                }
+            }
         }
 
+        // 4. 为志愿者发放信誉分
         rewardVolunteerCredit(userId, deliveryTask.getOrderId());
     }
 
@@ -80,7 +110,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
             creditLog.setUserId(userId);
             creditLog.setOrderId(orderId);
             creditLog.setChangeValue(rewardPoints);
-            creditLog.setReason("完成订单送达，发放积分奖励");
+            creditLog.setReason("完成订单送达，发放信誉分奖励");
             creditLog.setCreateTime(LocalDateTime.now());
             creditLogService.save(creditLog);
 
@@ -102,7 +132,6 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         List<MyTaskVO> voList = taskPage.getRecords().stream().map(task -> {
             DispatchOrder order = orderService.getById(task.getOrderId());
 
-            // 初始化起终点信息
             String sourceName = "未知起点";
             String sourceAddress = "位置待确认";
             BigDecimal sourceLon = null;
@@ -117,9 +146,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                 targetLon = order.getTargetLon();
                 targetLat = order.getTargetLat();
 
-                // 🚨 核心逻辑：红蓝双轨分流判断
                 if (order.getOrderType() != null && order.getOrderType() == 1) {
-                    // 【🔵 捐赠单】 起点(Source)=商家，终点(Dest)=据点
                     User merchant = userService.getById(order.getSourceId());
                     if (merchant != null) {
                         sourceName = merchant.getUsername() + " (爱心商铺)";
@@ -136,7 +163,6 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                         targetLat = station.getLatitude();
                     }
                 } else {
-                    // 【🔴 求助单】 起点(Source)=据点，终点(Dest)=受助市民
                     Station station = stationService.getById(order.getSourceId());
                     if (station != null) {
                         sourceName = station.getStationName();
@@ -149,7 +175,6 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                     if (recipient != null) {
                         targetName = recipient.getUsername() + " (求助市民)";
                         targetAddress = "联系电话: " + recipient.getPhone();
-                        // 如果订单没存坐标，用用户表里的实时坐标兜底
                         if (targetLon == null) targetLon = recipient.getCurrentLon();
                         if (targetLat == null) targetLat = recipient.getCurrentLat();
                     }
@@ -166,8 +191,6 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                     .goodsCount(order != null ? order.getGoodsCount() : null)
                     .urgencyLevel(order != null ? order.getUrgencyLevel() : null)
                     .requiredCategory(order != null ? order.getRequiredCategory() : "未知")
-
-                    // 🚨 注入统一抽象后的起终点数据
                     .sourceName(sourceName)
                     .sourceAddress(sourceAddress)
                     .sourceLon(sourceLon)
@@ -176,7 +199,6 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                     .targetAddress(targetAddress)
                     .targetLon(targetLon)
                     .targetLat(targetLat)
-
                     .build();
         }).collect(Collectors.toList());
 

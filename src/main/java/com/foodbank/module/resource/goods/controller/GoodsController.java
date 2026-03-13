@@ -6,6 +6,7 @@ import com.foodbank.common.api.Result;
 import com.foodbank.common.utils.UserContext;
 import com.foodbank.module.resource.goods.entity.Goods;
 import com.foodbank.module.resource.goods.model.dto.DonateDTO;
+import com.foodbank.module.resource.goods.model.dto.GoodsAdjustDTO;
 import com.foodbank.module.resource.goods.model.vo.MerchantGoodsVO;
 import com.foodbank.module.resource.goods.service.IGoodsService;
 import com.foodbank.module.trade.order.entity.DispatchOrder;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Tag(name = "Goods Controller", description = "救灾物资与库存管理")
 @RestController
@@ -138,5 +140,18 @@ public class GoodsController {
     public Result<Void> finishSelfDelivery(@PathVariable Long goodsId) {
         goodsService.finishSelfDelivery(goodsId, UserContext.getUserId());
         return Result.success(null, "物资已成功入库，感谢您的亲力亲为！");
+    }
+
+    @Operation(summary = "查询指定驿站大仓台账", description = "获取当前入库可调度的物资列表")
+    @GetMapping("/station/{stationId}")
+    public Result<List<Goods>> getStationGoods(@PathVariable Long stationId) {
+        return Result.success(goodsService.getStationGoods(stationId));
+    }
+
+    @Operation(summary = "手工校准库存", description = "网格员线下手工入库或损耗报废")
+    @PostMapping("/adjust")
+    public Result<String> adjustGoodsStock(@RequestBody GoodsAdjustDTO dto) {
+        goodsService.adjustGoodsStock(dto);
+        return Result.success("库存校准及平账成功");
     }
 }

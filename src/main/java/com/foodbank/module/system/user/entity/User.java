@@ -80,4 +80,9 @@ public class User implements Serializable {
     @Schema(description = "用户头像(MinIO URL)")
     @TableField("avatar")
     private String avatar;
+
+    // 👇新增：商家的静态资质壁垒
+    @Schema(description = "行业经营范围(商家专用): 1-餐饮生鲜, 2-商超便利, 3-医药器械, 4-服饰百货")
+    @TableField("industry_type")
+    private Byte industryType;
 }

@@ -24,4 +24,8 @@ public class RegisterDTO {
 
     @Schema(description = "资质证明图片URL")
     private String identityProofUrl;
+
+    // 👇新增：接收商家注册时的行业选择
+    @Schema(description = "行业经营范围(仅商家注册需传): 1-餐饮生鲜, 2-商超便利, 3-医药器械, 4-服饰百货")
+    private Byte industryType;
 }

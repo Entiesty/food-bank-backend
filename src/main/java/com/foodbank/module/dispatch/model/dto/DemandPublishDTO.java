@@ -1,9 +1,11 @@
 package com.foodbank.module.dispatch.model.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
+import java.util.List;
 
 @Data
 public class DemandPublishDTO {
@@ -21,4 +23,7 @@ public class DemandPublishDTO {
     private BigDecimal targetLat;
     
     private String description;
+
+    @Schema(description = "根据老人行为隐式推导出的需求标签数组")
+    private List<String> requiredTags;
 }

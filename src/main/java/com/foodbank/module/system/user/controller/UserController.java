@@ -17,6 +17,8 @@ import org.springframework.util.DigestUtils;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @Tag(name = "User Center", description = "用户个人中心与安全设置")
 @RestController
 @RequestMapping("/system/user")
@@ -115,5 +117,11 @@ public class UserController {
             throw new BusinessException("头像更新失败，请重试");
         }
         return Result.success(null, "头像更换成功！");
+    }
+
+    @Operation(summary = "获取可选的据点负责人列表")
+    @GetMapping("/managers")
+    public Result<List<User>> getEligibleManagers() {
+        return Result.success(userService.getEligibleManagers());
     }
 }

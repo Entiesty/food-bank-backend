@@ -37,7 +37,7 @@ public class DeliveryTask implements Serializable {
 
     @Schema(description = "乐观锁版本号(解决高并发抢单)")
     @TableField("version")
-    @Version  // 🚨 核心改动：告诉 MyBatis-Plus 这是一个乐观锁字段
+    @Version
     private Integer version;
 
     @Schema(description = "1:已接单, 2:已取货, 3:已完成")
@@ -51,4 +51,9 @@ public class DeliveryTask implements Serializable {
     @Schema(description = "送达核销时间")
     @TableField("complete_time")
     private LocalDateTime completeTime;
+
+    // 🚀 核心新增：核销凭证照片URL，必须与数据库字段名对应！
+    @Schema(description = "核销凭证照片URL")
+    @TableField("proof_image")
+    private String proofImage;
 }

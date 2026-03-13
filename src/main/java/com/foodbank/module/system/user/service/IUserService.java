@@ -5,6 +5,8 @@ import com.foodbank.module.system.user.entity.User;
 import com.foodbank.module.system.user.model.vo.UserDashboardVO;
 import com.baomidou.mybatisplus.extension.service.IService;
 
+import java.util.List;
+
 public interface IUserService extends IService<User> {
 
     /**
@@ -26,4 +28,9 @@ public interface IUserService extends IService<User> {
      * 🚨 新增：强制清退违规用户（执行逻辑封禁与业务熔断）
      */
     void evictUser(Long userId);
+
+    /**
+     * 获取可选的据点负责人列表 (角色为 3 志愿者或 4 管理员，且状态正常)
+     */
+    List<User> getEligibleManagers();
 }

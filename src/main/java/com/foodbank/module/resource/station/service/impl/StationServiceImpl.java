@@ -134,4 +134,22 @@ public class StationServiceImpl extends ServiceImpl<StationMapper, Station> impl
         double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         return R * c;
     }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean updateStationAndSyncGeo(Station station) {
+        boolean updated = this.updateById(station);
+        if (!updated) throw new BusinessException("更新据点失败");
+
+        if (station.getLongitude() != null && station.getLatitude() != null) {
+            // 重新往 Geo 里 add 相同的 member (stationId)，会自动覆盖旧的经纬度
+            Point point = new Point(station.getLongitude().doubleValue(), station.getLatitude().doubleValue());
+            stringRedisTemplate.opsForGeo().add(
+                    RedisKeyConstant.STATION_GEO_KEY,
+                    point,
+                    String.valueOf(station.getStationId())
+            );
+        }
+        return true;
+    }
 }

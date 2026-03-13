@@ -82,4 +82,17 @@ public class DispatchOrder implements Serializable {
     @Schema(description = "调度异常原因/滞留标签")
     @TableField("exception_reason")
     private String exceptionReason;
+
+    @Schema(description = "受赠方评分(1-5星)")
+    @TableField("recipient_rating")
+    private Integer recipientRating;
+
+    @Schema(description = "受赠方补充评价")
+    @TableField("recipient_comment")
+    private String recipientComment;
+
+    // 🚨 终极闭环：隐式解析出的需求标签
+    @Schema(description = "需求特征标签(隐式解析)")
+    @TableField("required_tags")
+    private String requiredTags;
 }

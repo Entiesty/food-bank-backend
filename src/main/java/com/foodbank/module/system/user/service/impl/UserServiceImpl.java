@@ -150,4 +150,15 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             dispatchOrderMapper.updateById(order);
         }
     }
+
+    @Override
+    public List<User> getEligibleManagers() {
+        // 🚀 真实查库：筛选 role 为 3 或 4，且 status = 1 (账号正常) 的用户
+        return this.list(new LambdaQueryWrapper<User>()
+                .in(User::getRole, Arrays.asList(3, 4))
+                .eq(User::getStatus, 1)
+                // 🔒 安全控制：只返回前端下拉框需要的核心字段，绝不把 password、credit_score 等全丢出去
+                .select(User::getUserId, User::getUsername, User::getPhone)
+        );
+    }
 }

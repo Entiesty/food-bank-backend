@@ -17,28 +17,29 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns(
-                        // --- 🚨 认证模块 (全面放行) ---
-                        "/auth/login",
-                        "/auth/register",
-                        "/auth/send-code",
-                        "/auth/reset-password",
+                        // --- 认证模块 ---
+                        "/auth/**",
 
-                        // --- 🚨 文件上传模块 (放行注册时的图片上传) ---
-                        "/common/file/upload",  // 新增这一行！
-                        "/common/file/**",      // 稳妥起见，把 common/file 下的都放行
+                        // --- 文件模块 ---
+                        "/common/file/**",
+                        "/upload/**",
 
                         // --- 数据大屏与通用 ---
                         "/dispatch/dashboard/**",
                         "/resource/station/list",
                         "/favicon.ico",
-                        "/upload/**", // 这个可能是你以前本地存储留下的，保留即可
+                        "/error",
 
-                        // --- 接口文档 ---
+                        // --- 重点：放行 Swagger / Knife4j 静态资源 ---
                         "/doc.html",
-                        "/webjars/**",
-                        "/v3/api-docs/**",
+                        "/swagger-ui.html",
                         "/swagger-ui/**",
-                        "/error"
+                        "/v3/api-docs/**",
+                        "/v2/api-docs/**",
+                        "/swagger-resources/**",
+                        "/webjars/**",
+                        "**/swagger-ui.html", // 防止路径前缀干扰
+                        "/api/swagger-ui.html" // 如果你确实需要这个硬编码路径
                 );
     }
 }

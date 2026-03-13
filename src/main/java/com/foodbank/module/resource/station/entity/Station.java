@@ -43,5 +43,10 @@ public class Station {
      */
     private Integer isEmergencyHub;
 
+    /**
+     * 💡 新增：是否有冷柜/冷链储藏能力: 0-无, 1-有
+     */
+    private Integer hasFreezer;
+
     private LocalDateTime createTime;
 }

@@ -39,4 +39,9 @@ public interface IDispatchOrderService extends IService<DispatchOrder> {
      * 🚀 新增：专供调度大屏获取待处理订单（附带起终点名字）
      */
     List<DispatchOrder> getPendingOrdersForMap();
+
+    /**
+     * 受赠方确认收货并评价
+     */
+    void confirmReceiptAndRate(Long orderId, Long userId, Integer rating, String comment);
 }

@@ -3,6 +3,7 @@ package com.foodbank.module.dispatch.strategy;
 import com.foodbank.module.dispatch.model.vo.DispatchCandidateVO;
 import com.foodbank.module.system.config.entity.Config;
 import com.foodbank.module.system.config.service.IConfigService;
+import com.foodbank.module.trade.order.model.vo.AvailableOrderVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -22,27 +23,19 @@ public class MultiFactorDispatchStrategy {
     private IConfigService configService;
 
     /**
-     * 对候选物资/据点进行综合打分并排序
-     *
-     * @param candidates 初筛后的候选列表 (包含据点、物资、距离)
-     * @param orderUrgency 当前订单的紧急度 (1-10)
-     * @return 按得分从高到低排序的最佳匹配列表
+     * 对候选物资/据点进行综合打分并排序 (系统大盘自动指派使用)
      */
     public List<DispatchCandidateVO> calculateAndRank(List<DispatchCandidateVO> candidates, int orderUrgency) {
         if (candidates == null || candidates.isEmpty()) {
             return candidates;
         }
 
-        // 1. 实时拉取数据库最新的动态权重配置 (支持平急两用热切换)
-        // 假设 id=1 是当前生效的全局配置
         Config activeConfig = configService.getCurrentConfig();
         double wDist = activeConfig.getWDist().doubleValue();
         double wUrgency = activeConfig.getWUrgency().doubleValue();
-        // 扩展权重：假设剩余权重分配给物资自身属性(库存0.1、临期0.1等，可根据实际情况再到数据库扩充字段)
         double wStock = 0.10;
         double wExpiration = 0.10;
 
-        // 2. 寻找极值用于归一化处理 (Min-Max Normalization)
         long maxDistance = candidates.stream().mapToLong(DispatchCandidateVO::getDistance).max().orElse(1L);
         long minDistance = candidates.stream().mapToLong(DispatchCandidateVO::getDistance).min().orElse(0L);
         long distanceRange = Math.max(maxDistance - minDistance, 1L);
@@ -51,54 +44,93 @@ public class MultiFactorDispatchStrategy {
         int minStock = candidates.stream().mapToInt(DispatchCandidateVO::getCurrentStock).min().orElse(0);
         int stockRange = Math.max(maxStock - minStock, 1);
 
-        // 提取临期时间的极值 (转换为时间戳秒数)
-        long maxExpTime = candidates.stream()
-                .mapToLong(c -> c.getGoods().getExpirationDate().toEpochSecond(ZoneOffset.UTC))
-                .max().orElse(1L);
-        long minExpTime = candidates.stream()
-                .mapToLong(c -> c.getGoods().getExpirationDate().toEpochSecond(ZoneOffset.UTC))
-                .min().orElse(0L);
+        long maxExpTime = candidates.stream().mapToLong(c -> c.getGoods().getExpirationDate().toEpochSecond(ZoneOffset.UTC)).max().orElse(1L);
+        long minExpTime = candidates.stream().mapToLong(c -> c.getGoods().getExpirationDate().toEpochSecond(ZoneOffset.UTC)).min().orElse(0L);
         long expRange = Math.max(maxExpTime - minExpTime, 1L);
 
-        // 订单紧急度归一化 (上限默认 10 级)
         double normUrgency = orderUrgency / 10.0;
 
-        // 3. 遍历计算每个据点/物资的综合得分
         for (DispatchCandidateVO candidate : candidates) {
-
-            // 因子 A：距离 (成本因子，越小越好) -> 反向归一化
             double normDistance = (double) (maxDistance - candidate.getDistance()) / distanceRange;
-
-            // 因子 B：库存 (效益因子，越大越好) -> 正向归一化
             double normStock = (double) (candidate.getCurrentStock() - minStock) / stockRange;
 
-            // 因子 C：临期时间 (成本因子，离过期越近越需要尽早发走) -> 反向归一化
             long currentExpTime = candidate.getGoods().getExpirationDate().toEpochSecond(ZoneOffset.UTC);
             double normExpiration = (double) (maxExpTime - currentExpTime) / expRange;
 
-            // 因子 D：应急属性补偿 (平急两用体现)
-            // 如果订单紧急度>=8，且当前据点是核心应急调度站，给予 1.0 的满分补偿（再乘以紧急度权重）
             double emergencyBonus = (orderUrgency >= 8 && candidate.getStation().getIsEmergencyHub() == 1) ? 1.0 : 0.0;
 
-            // 核心加权公式
             double finalScore = (normDistance * wDist)
                     + (normStock * wStock)
                     + (normExpiration * wExpiration)
-                    + ((normUrgency + emergencyBonus) * wUrgency); // 紧急订单匹配应急站会有极大加分
+                    + ((normUrgency + emergencyBonus) * wUrgency);
 
             candidate.setFinalScore(finalScore);
-
-            log.debug("🎯 候选评测 [{}-{}] | 距离:{}m(分:{}), 临期:{}秒(分:{}), 应急站:{}(分:{}) => 总分: {}",
-                    candidate.getStation().getStationName(), candidate.getGoods().getGoodsName(),
-                    candidate.getDistance(), String.format("%.2f", normDistance * wDist),
-                    currentExpTime, String.format("%.2f", normExpiration * wExpiration),
-                    candidate.getStation().getIsEmergencyHub(), String.format("%.2f", emergencyBonus * wUrgency),
-                    String.format("%.4f", finalScore));
         }
 
-        // 4. 按最终得分降序排序 (分数最高的排在最前面，即“最优解”)
         candidates.sort(Comparator.comparing(DispatchCandidateVO::getFinalScore).reversed());
-
         return candidates;
+    }
+
+    /**
+     * 🚀 核心新增：为志愿者抢单大厅提供千人千面的排序测算
+     * 计算真正的“接驾距离”，并融合信誉与紧急度进行最终打分
+     */
+    public void rankOrdersForVolunteer(List<AvailableOrderVO> orders, Double volLon, Double volLat, int volCredit) {
+        if (orders == null || orders.isEmpty() || volLon == null || volLat == null) {
+            return;
+        }
+
+        Config activeConfig = configService.getCurrentConfig();
+        double wDist = activeConfig.getWDist().doubleValue();
+        double wUrgency = activeConfig.getWUrgency().doubleValue();
+        double wCredit = activeConfig.getWCredit().doubleValue();
+
+        // 1. 计算接驾距离并寻找极值用于归一化
+        double maxDist = 1.0;
+        double minDist = Double.MAX_VALUE;
+
+        for (AvailableOrderVO order : orders) {
+            double dist = 999.0;
+            // 只有当订单起点坐标存在时，才计算志愿者当前坐标与起点的距离
+            if (order.getSourceLon() != null && order.getSourceLat() != null) {
+                dist = calculateDistance(volLat, volLon, order.getSourceLat().doubleValue(), order.getSourceLon().doubleValue());
+            }
+            order.setPickupDistance(dist);
+
+            if (dist > maxDist && dist != 999.0) maxDist = dist;
+            if (dist < minDist) minDist = dist;
+        }
+
+        double distRange = Math.max(maxDist - minDist, 1.0);
+
+        // 2. 多因子加权打分
+        for (AvailableOrderVO order : orders) {
+            // A. 距离反向归一化 (越近接驾分越高)
+            double normDist = (order.getPickupDistance() == 999.0) ? 0 : ((maxDist - order.getPickupDistance()) / distRange);
+            // B. 紧急度正向归一化 (越急分越高)
+            double normUrgency = order.getUrgencyLevel() / 10.0;
+            // C. 信誉分赋能 (高信誉骑士获得基础分加成，更容易抢到好单)
+            double normCredit = Math.min(volCredit / 150.0, 1.0);
+
+            double finalScore = (normDist * wDist) + (normUrgency * wUrgency) + (normCredit * wCredit);
+            order.setMatchScore(finalScore);
+        }
+
+        // 3. 按照得分从高到低排序
+        orders.sort(Comparator.comparing(AvailableOrderVO::getMatchScore).reversed());
+    }
+
+    /**
+     * 📐 Haversine 直线距离测算 (km)
+     */
+    private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+        final int R = 6371;
+        double latDistance = Math.toRadians(lat2 - lat1);
+        double lonDistance = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
     }
 }

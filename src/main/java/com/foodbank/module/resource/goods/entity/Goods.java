@@ -67,4 +67,9 @@ public class Goods implements Serializable {
 
     @TableField("create_time")
     private LocalDateTime createTime;
+
+    // 🚨 终极闭环：物资精细化特征标签
+    @Schema(description = "物资属性标签(逗号分隔)")
+    @TableField("tags")
+    private String tags;
 }

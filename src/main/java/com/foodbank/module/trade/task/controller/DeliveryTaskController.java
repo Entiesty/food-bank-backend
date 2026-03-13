@@ -19,17 +19,18 @@ public class DeliveryTaskController {
     @Autowired
     private IDeliveryTaskService taskService;
 
-    // 🚨 修改点 1：把 /checkout 改为 /complete 配合前端
-    @Operation(summary = "3. 确认送达核销任务", description = "志愿者到达目的地后核销，系统自动结算信誉分奖励")
+    @Operation(summary = "3. 确认送达核销任务", description = "志愿者到达目的地后核销，并上传现场照片")
     @PostMapping("/complete")
     public Result<String> checkOutTask(
-            @Parameter(description = "任务ID", required = true) @RequestParam Long taskId) {
+            @Parameter(description = "任务ID", required = true) @RequestParam Long taskId,
+            @Parameter(description = "核销凭证照片URL") @RequestParam(required = false) String proofImage) {
+
         Long myVolunteerId = UserContext.getUserId();
-        taskService.completeTask(taskId, myVolunteerId);
-        return Result.success("核销成功！信誉分已奖励，感谢您的付出。");
+        // 🚀 传参透传，完成闭环
+        taskService.completeTask(taskId, myVolunteerId, proofImage);
+        return Result.success("核销成功！现场照片已归档，信誉分已奖励。");
     }
 
-    // 🚨 修改点 2：把 /my-tasks 改为 /my-list 配合前端
     @Operation(summary = "4. 获取我的任务列表", description = "志愿者获取自己当前的历史和执行中的任务")
     @GetMapping("/my-list")
     public Result<Page<MyTaskVO>> getMyTasks(

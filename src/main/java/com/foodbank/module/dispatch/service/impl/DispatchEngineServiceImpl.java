@@ -21,17 +21,21 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.geo.GeoResults;
 import org.springframework.data.redis.connection.RedisGeoCommands;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
 public class DispatchEngineServiceImpl {
 
-    // ================= 依赖注入区 =================
     @Autowired
     private IStationService stationService;
     @Autowired
@@ -45,84 +49,101 @@ public class DispatchEngineServiceImpl {
     private IDispatchOrderService orderService;
     @Autowired
     private IDeliveryTaskService taskService;
-
     @Autowired
     private IUserService userService;
 
-    // ================= 核心业务方法 =================
+    // 🚨 新增注入 Redis 操作模板
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
-    /**
-     * 核心 1：一键智能匹配最优派发据点 (已恢复纯净无副作用模式)
-     */
     public List<DispatchCandidateVO> smartMatchStations(DispatchOrder dispatchOrder) {
-        log.info("📡 启动智能派单匹配，坐标:[{},{}], 需求物资大类:{}, 紧急度:{}",
-                dispatchOrder.getTargetLon(), dispatchOrder.getTargetLat(), dispatchOrder.getRequiredCategory(), dispatchOrder.getUrgencyLevel());
+        log.info("📡 启动智能派单匹配，坐标:[{},{}], 需求大类:{}, 需求标签:{}",
+                dispatchOrder.getTargetLon(), dispatchOrder.getTargetLat(),
+                dispatchOrder.getRequiredCategory(), dispatchOrder.getRequiredTags());
 
-        // 1. Redis Geo 空间初筛 (方圆 5 公里)
         GeoResults<RedisGeoCommands.GeoLocation<String>> geoResults =
                 stationService.searchNearbyStations(dispatchOrder.getTargetLon().doubleValue(), dispatchOrder.getTargetLat().doubleValue(), 5.0);
 
         if (geoResults == null || geoResults.getContent().isEmpty()) {
-            // 🚨 纯净返回：找不到驿站，直接返回空集合，绝不修改数据库！
             return new ArrayList<>();
         }
+
+        List<String> reqTags = new ArrayList<>();
+        if (dispatchOrder.getRequiredTags() != null && !dispatchOrder.getRequiredTags().isEmpty()) {
+            reqTags = Arrays.asList(dispatchOrder.getRequiredTags().split(","));
+        }
+        boolean hasTagRequirement = !reqTags.isEmpty();
 
         List<DispatchCandidateVO> candidates = new ArrayList<>();
         String originLonLat = dispatchOrder.getTargetLon() + "," + dispatchOrder.getTargetLat();
 
-        // 2. 遍历附近据点，进行物资复筛与高德路径规划
         for (var result : geoResults.getContent()) {
             Long stationId = Long.parseLong(result.getContent().getName());
 
-            // 按【类别】而非具体 ID 查找，且必须是已入库(2)的物资
-            Goods goods = goodsService.getOne(new LambdaQueryWrapper<Goods>()
+            List<Goods> stationGoodsList = goodsService.list(new LambdaQueryWrapper<Goods>()
                     .eq(Goods::getCurrentStationId, stationId)
                     .eq(Goods::getCategory, dispatchOrder.getRequiredCategory())
                     .eq(Goods::getStatus, 2)
-                    .last("LIMIT 1"));
+                    .gt(Goods::getStock, 0));
 
-            if (goods == null || goods.getStock() <= 0) continue;
+            Goods bestMatchedGoods = null;
+            double maxTagScore = -1.0;
+
+            for (Goods goods : stationGoodsList) {
+                double currentTagScore = 1.0;
+
+                if (hasTagRequirement) {
+                    if (goods.getTags() == null || goods.getTags().isEmpty()) {
+                        currentTagScore = 0.0;
+                    } else {
+                        List<String> goodsTags = Arrays.asList(goods.getTags().split(","));
+                        long matchCount = reqTags.stream().filter(goodsTags::contains).count();
+
+                        if (matchCount == 0) {
+                            log.warn("⚠️ 属性熔断机制：需要 {}, 但物资 [{}] 仅有 {}, 已强行剥离丢弃！",
+                                    reqTags, goods.getGoodsName(), goodsTags);
+                            continue;
+                        }
+                        currentTagScore = (double) matchCount / reqTags.size();
+                    }
+                }
+
+                if (currentTagScore > maxTagScore) {
+                    maxTagScore = currentTagScore;
+                    bestMatchedGoods = goods;
+                }
+            }
+
+            if (bestMatchedGoods == null) continue;
 
             Station station = stationService.getById(stationId);
             if (station == null) continue;
 
             String destLonLat = station.getLongitude() + "," + station.getLatitude();
             try {
-                // 调用高德 API 获取真实骑行距离与耗时
                 AmapDirectionResponse.Path path = amapClientService.getRidingDistance(originLonLat, destLonLat);
                 candidates.add(DispatchCandidateVO.builder()
                         .station(station)
-                        .goods(goods)
+                        .goods(bestMatchedGoods)
                         .distance(path.distance())
                         .duration(path.duration())
-                        .currentStock(goods.getStock())
+                        .currentStock(bestMatchedGoods.getStock())
                         .build());
             } catch (Exception e) {
-                log.error("高德路径规划异常，据点ID: {} 暂不参与本次调度。详细报错：{}", stationId, e.getMessage());
+                log.error("高德路径规划异常，据点ID: {}", stationId, e);
             }
         }
 
-        if (candidates.isEmpty()) {
-            // 🚨 纯净返回：找不到物资，直接返回空集合，绝不修改数据库！
-            return new ArrayList<>();
-        }
-
-        // 3. 丢给核心加权算法算分并排序
+        if (candidates.isEmpty()) return new ArrayList<>();
         return dispatchStrategy.calculateAndRank(candidates, dispatchOrder.getUrgencyLevel());
     }
 
-    // ================= 以下为原有业务方法，保持原样 =================
-
-    /**
-     * 核心 2：高并发志愿者抢单 (防止超卖)
-     */
     @Transactional(rollbackFor = Exception.class)
     public void grabOrder(Long orderId, Long volunteerId) {
         if (orderId == null || volunteerId == null) {
             throw new BusinessException("订单ID或志愿者ID不能为空");
         }
 
-        // 防御：资质合规性校验
         User volunteer = userService.getById(volunteerId);
         if (volunteer == null) {
             throw new BusinessException("志愿者身份异常，请重新登录");
@@ -133,7 +154,6 @@ public class DispatchEngineServiceImpl {
 
         log.info("志愿者 [{}] 正在尝试抢夺订单 [{}]", volunteerId, orderId);
 
-        // 防线 1：状态机 CAS 乐观锁
         boolean isGrabbed = orderService.update(
                 new LambdaUpdateWrapper<DispatchOrder>()
                         .eq(DispatchOrder::getOrderId, orderId)
@@ -146,7 +166,6 @@ public class DispatchEngineServiceImpl {
             throw new BusinessException("晚了一小步，该任务已有志愿者领取了。感谢你的热心，去看看其他任务吧！");
         }
 
-        // 防线 2：唯一索引兜底
         try {
             DeliveryTask deliveryTask = new DeliveryTask();
             deliveryTask.setOrderId(orderId);
@@ -163,9 +182,6 @@ public class DispatchEngineServiceImpl {
         }
     }
 
-    /**
-     * 核心 3：志愿者点击“已取货” (测试 @Version 乐观锁)
-     */
     public void pickUpGoods(Long taskId) {
         if (taskId == null) {
             throw new BusinessException("任务ID不能为空");
@@ -187,5 +203,70 @@ public class DispatchEngineServiceImpl {
             throw new BusinessException("操作冲突，请刷新页面获取最新状态");
         }
         log.info("任务 [{}] 状态已更新为：已取货", taskId);
+    }
+
+    /**
+     * 🚨 核心逻辑：触发周边商铺紧急定向募捐 (加入 Redis 消息推送引擎)
+     */
+    public Map<String, Object> triggerEmergencyBroadcast(Long orderId) {
+        DispatchOrder order = orderService.getById(orderId);
+        if (order == null || order.getTargetLon() == null) {
+            throw new BusinessException("坐标缺失，无法划定广播范围");
+        }
+
+        List<User> allMerchants = userService.list(new LambdaQueryWrapper<User>()
+                .eq(User::getRole, 2)
+                .isNotNull(User::getCurrentLon));
+
+        List<User> list3km = new ArrayList<>();
+        List<User> list10km = new ArrayList<>();
+
+        // 1. 空间测距
+        for (User merchant : allMerchants) {
+            double distanceKm = calculateDistance(
+                    order.getTargetLat().doubleValue(), order.getTargetLon().doubleValue(),
+                    merchant.getCurrentLat().doubleValue(), merchant.getCurrentLon().doubleValue()
+            );
+            if (distanceKm <= 3.0) list3km.add(merchant);
+            if (distanceKm <= 10.0) list10km.add(merchant);
+        }
+
+        List<User> targetMerchants;
+        Map<String, Object> result = new HashMap<>();
+
+        // 2. 降级网关
+        if (!list3km.isEmpty()) {
+            targetMerchants = list3km;
+            result.put("radius", 3);
+            result.put("isDegraded", false);
+        } else if (!list10km.isEmpty()) {
+            targetMerchants = list10km;
+            result.put("radius", 10);
+            result.put("isDegraded", true);
+        } else {
+            throw new BusinessException("终极熔断：扩大至全城 10 公里均无商铺响应！");
+        }
+
+        // 3. 🚀 THE MAGIC: 将紧急消息推入 Redis (60秒过期)，等待商家轮询提取
+        for (User m : targetMerchants) {
+            String redisKey = "EMERGENCY_BCAST:" + m.getUserId();
+            // 组装消息：分类|订单ID
+            String msgPayload = order.getRequiredCategory() + "|" + order.getOrderId();
+            stringRedisTemplate.opsForValue().set(redisKey, msgPayload, 60, TimeUnit.SECONDS);
+        }
+
+        result.put("notifiedCount", targetMerchants.size());
+        return result;
+    }
+
+    private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+        final int R = 6371; // 地球半径(km)
+        double latDistance = Math.toRadians(lat2 - lat1);
+        double lonDistance = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
     }
 }

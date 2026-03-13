@@ -166,4 +166,15 @@ public class DispatchOrderController {
 
         return Result.success(exceptionList);
     }
+
+    @Operation(summary = "受赠方确认收货并评价", description = "状态扭转为3，并动态结算骑手信誉分")
+    @PostMapping("/confirm-receipt")
+    public Result<String> confirmReceipt(
+            @RequestParam Long orderId,
+            @RequestParam Integer rating,
+            @RequestParam(required = false) String comment) {
+        Long myUserId = UserContext.getUserId();
+        orderService.confirmReceiptAndRate(orderId, myUserId, rating, comment);
+        return Result.success("评价成功，感谢您的反馈！");
+    }
 }
