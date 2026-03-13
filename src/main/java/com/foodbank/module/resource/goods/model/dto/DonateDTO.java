@@ -32,15 +32,22 @@ public class DonateDTO {
     @Schema(description = "过期/临期时间")
     private LocalDateTime expirationDate;
 
-    @NotNull(message = "接收驿站不能为空")
+    // 战时模式下可以为空
     @Schema(description = "捐入的社区驿站 ID")
     private Long currentStationId;
 
-    // 🚨 接收商家前端勾选的标签数组
     @Schema(description = "物资特征标签数组")
-    private java.util.List<String> tags;
+    private List<String> tags;
 
-    // 🚨 新增：接收定向捐赠的目标求救单 ID (平时普通捐赠时该字段为 null)
     @Schema(description = "定向响应的紧急求救单ID")
     private Long targetOrderId;
+
+    // 🚨 本次新增：抽象物理形态预估
+    @NotNull(message = "体积评估不能为空")
+    @Schema(description = "体积级别: 1-手提袋, 2-外卖箱, 3-后备箱")
+    private Integer volumeLevel;
+
+    @NotNull(message = "重量评估不能为空")
+    @Schema(description = "重量级别: 1-轻便, 2-偏重, 3-极重")
+    private Integer weightLevel;
 }

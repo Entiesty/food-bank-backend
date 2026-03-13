@@ -26,4 +26,8 @@ public class DemandPublishDTO {
 
     @Schema(description = "根据老人行为隐式推导出的需求标签数组")
     private List<String> requiredTags;
+
+    // 🚨 本次新增：履约方式 (1-志愿者配送上门, 2-居民线下自提)
+    @NotNull(message = "请选择取货方式")
+    private Integer deliveryMethod;
 }

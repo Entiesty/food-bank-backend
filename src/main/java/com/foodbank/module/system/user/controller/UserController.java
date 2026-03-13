@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.DigestUtils;
+import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -44,12 +45,11 @@ public class UserController {
     public Result<Void> updateProfile(@Validated @RequestBody UserUpdateDTO dto) {
         Long userId = UserContext.getUserId();
 
-        // 👇 核心修复：使用 MyBatis-Plus 动态更新字段
+        // 使用 MyBatis-Plus 动态更新字段
         LambdaUpdateWrapper<User> updateWrapper = new LambdaUpdateWrapper<User>()
                 .eq(User::getUserId, userId)
                 .set(User::getUsername, dto.getUsername());
 
-        // 如果前端传了经纬度，就把它们加入到 UPDATE 语句中
         if (dto.getCurrentLon() != null) {
             updateWrapper.set(User::getCurrentLon, dto.getCurrentLon());
         }
@@ -57,10 +57,22 @@ public class UserController {
             updateWrapper.set(User::getCurrentLat, dto.getCurrentLat());
         }
 
+        // 🚨 核心修复 1：把前端选的交通工具存进数据库
+        if (dto.getVehicleType() != null) {
+            updateWrapper.set(User::getVehicleType, dto.getVehicleType());
+        }
+
+        // 🚨 核心修复 2：把前端上传的资质照片存进数据库，并重置审核状态！
+        if (StringUtils.hasText(dto.getIdentityProofUrl())) {
+            updateWrapper.set(User::getIdentityProofUrl, dto.getIdentityProofUrl());
+            // 如果用户重新上传了材料，应该把状态置为“待审核(0)”以防作弊
+            updateWrapper.set(User::getIsVerified, (byte) 0);
+        }
+
         boolean success = userService.update(updateWrapper);
 
         if (!success) throw new BusinessException("资料更新失败，请重试");
-        return Result.success(null, "资料及基站坐标更新成功！");
+        return Result.success(null, "资料及偏好设置更新成功！");
     }
 
     @Operation(summary = "3. 修改密码")

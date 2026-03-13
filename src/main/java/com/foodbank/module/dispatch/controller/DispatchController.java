@@ -44,12 +44,24 @@ public class DispatchController {
     @Operation(summary = "0. 模拟智能派单计算(答辩演示专用)", description = "直接输入经纬度和需求，不落库，直接返回算法打分与排序结果")
     @PostMapping("/smart-match")
     public Result<List<DispatchCandidateVO>> smartMatch(@Validated @RequestBody DemandPublishDTO reqDTO) {
+        // 将前端传来的 DTO 组装成临时的 Order 对象喂给底层算法引擎
         DispatchOrder tempDispatchOrder = new DispatchOrder();
         tempDispatchOrder.setTargetLon(reqDTO.getTargetLon());
         tempDispatchOrder.setTargetLat(reqDTO.getTargetLat());
         tempDispatchOrder.setRequiredCategory(reqDTO.getRequiredCategory());
         tempDispatchOrder.setUrgencyLevel(reqDTO.getUrgencyLevel().byteValue());
 
+        // 🚨 核心修复：将 List<String> 类型的标签，用逗号拼接成 String 后再存入实体！
+        if (reqDTO.getRequiredTags() != null && !reqDTO.getRequiredTags().isEmpty()) {
+            tempDispatchOrder.setRequiredTags(String.join(",", reqDTO.getRequiredTags()));
+        } else {
+            tempDispatchOrder.setRequiredTags(null);
+        }
+
+        // 配送方式透传
+        tempDispatchOrder.setDeliveryMethod(reqDTO.getDeliveryMethod() != null ? reqDTO.getDeliveryMethod().byteValue() : (byte)1);
+
+        // 调用流水线服务，直接返回各种因子的打分明细和最优路径
         List<DispatchCandidateVO> bestStations = dispatchOrderService.smartMatchStations(tempDispatchOrder);
         return Result.success(bestStations);
     }
