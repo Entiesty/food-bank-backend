@@ -102,6 +102,11 @@ public class StationServiceImpl extends ServiceImpl<StationMapper, Station> impl
             vo.setStationName(st.getStationName());
             vo.setAddress(st.getAddress());
 
+            // 👇👇👇 🚨 核心修复：把数据库查出来的冷链和应急属性赋值给 VO
+            vo.setHasFreezer(st.getHasFreezer());
+            vo.setIsEmergencyHub(st.getIsEmergencyHub());
+            // 👆👆👆
+
             // 🚨 真实 LBS 计算：如果前端传了商家的经纬度，且驿站也有经纬度
             if (userLon != null && userLat != null && st.getLongitude() != null && st.getLatitude() != null) {
                 double dist = calculateDistance(userLat, userLon, st.getLatitude().doubleValue(), st.getLongitude().doubleValue());

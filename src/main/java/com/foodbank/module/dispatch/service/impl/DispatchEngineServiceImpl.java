@@ -142,38 +142,60 @@ public class DispatchEngineServiceImpl {
         DispatchOrder order = orderService.getById(orderId);
         if (order == null) throw new BusinessException("该订单不存在");
 
-        // 🚨🚨 核心：物理形态与异构运力三维拦截 (风控网关) 🚨🚨
         Integer vType = volunteer.getVehicleType() != null ? volunteer.getVehicleType() : 1;
 
-        // 拦截 1：距离拦截（大于5km，步行/单车禁入）
+        // 🚨 拦截 1：距离拦截（大于5km，步行/单车禁入）
         if (order.getTargetLat() != null && order.getTargetLon() != null
                 && order.getSourceLat() != null && order.getSourceLon() != null) {
             double dist = calculateDistance(order.getSourceLat().doubleValue(), order.getSourceLon().doubleValue(),
                     order.getTargetLat().doubleValue(), order.getTargetLon().doubleValue());
             if (dist > 5.0 && vType <= 2) {
-                throw new BusinessException("🚨 运力不匹配：该单跨区较远(" + String.format("%.1f", dist) + "km)，您的载具(步行/单车)面临体力透支风险，请移交机动骑士！");
+                throw new BusinessException("🚨 运力不匹配：该单跨区较远(" + String.format("%.1f", dist) + "km)，请移交机动骑士！");
             }
         }
 
-        // 拦截 2：体积与重量绝对压制
+        // 🚨🚨 拦截 2：引入 CVRP 累计装载算力 (Capacity Points) 🚨🚨
         if (order.getGoodsId() != null) {
-            Goods goods = goodsService.getById(order.getGoodsId());
-            if (goods != null) {
-                int reqLevel = 1;
-                // 体积压制 (2-外卖箱, 3-后备箱)
-                if (goods.getVolumeLevel() != null && goods.getVolumeLevel() == 2) reqLevel = Math.max(reqLevel, 3);
-                if (goods.getVolumeLevel() != null && goods.getVolumeLevel() == 3) reqLevel = Math.max(reqLevel, 4);
-                // 重量压制 (2-偏重, 3-极重)
-                if (goods.getWeightLevel() != null && goods.getWeightLevel() == 2) reqLevel = Math.max(reqLevel, 3);
-                if (goods.getWeightLevel() != null && goods.getWeightLevel() == 3) reqLevel = Math.max(reqLevel, 4);
+            Goods newGoods = goodsService.getById(order.getGoodsId());
+            if (newGoods != null) {
+                // 1. 定义载具的【最大体积算力池】与【最大承重算力池】
+                int maxVolumePoints = vType == 1 ? 2 : (vType == 2 ? 5 : (vType == 3 ? 15 : 100));
+                int maxWeightPoints = vType == 1 ? 2 : (vType == 2 ? 4 : (vType == 3 ? 10 : 100));
 
-                if (vType < reqLevel) {
-                    String msg = reqLevel == 4 ? "🚗 该物资属于【后备箱/极重】级别，仅限汽车骑士接单！" : "🛵 该物资体积偏大，至少需要电动车接单！";
-                    throw new BusinessException("🚨 运载超限拦截：" + msg);
+                // 2. 累计骑手目前【正在执行中(taskStatus=1或2)】的订单负荷
+                int currentVolumePoints = 0;
+                int currentWeightPoints = 0;
+
+                List<DeliveryTask> activeTasks = taskService.list(new LambdaQueryWrapper<DeliveryTask>()
+                        .eq(DeliveryTask::getVolunteerId, volunteerId)
+                        .in(DeliveryTask::getTaskStatus, Arrays.asList(1, 2)));
+
+                for (DeliveryTask t : activeTasks) {
+                    DispatchOrder activeOrder = orderService.getById(t.getOrderId());
+                    if (activeOrder != null && activeOrder.getGoodsId() != null) {
+                        Goods g = goodsService.getById(activeOrder.getGoodsId());
+                        if (g != null) {
+                            currentVolumePoints += (g.getVolumeLevel() == 3 ? 40 : (g.getVolumeLevel() == 2 ? 5 : 1));
+                            currentWeightPoints += (g.getWeightLevel() == 3 ? 20 : (g.getWeightLevel() == 2 ? 5 : 1));
+                        }
+                    }
+                }
+
+                // 3. 加上当前准备抢的这单的负荷
+                int newVolumePoint = newGoods.getVolumeLevel() == 3 ? 40 : (newGoods.getVolumeLevel() == 2 ? 5 : 1);
+                int newWeightPoint = newGoods.getWeightLevel() == 3 ? 20 : (newGoods.getWeightLevel() == 2 ? 5 : 1);
+
+                // 4. 终极爆仓校验
+                if ((currentVolumePoints + newVolumePoint) > maxVolumePoints) {
+                    throw new BusinessException("🚨 爆仓预警：您的载具容量已达极限！无法再顺路接载该体积的物资，请先完成当前配送！");
+                }
+                if ((currentWeightPoints + newWeightPoint) > maxWeightPoints) {
+                    throw new BusinessException("🚨 超载预警：继续顺路接单将超出您的载具安全承重，已强行熔断！");
                 }
             }
-        }
+        }   
 
+        // --- 以下为正常的抢单扣减逻辑 ---
         boolean isGrabbed = orderService.update(
                 new LambdaUpdateWrapper<DispatchOrder>().eq(DispatchOrder::getOrderId, orderId)
                         .eq(DispatchOrder::getStatus, 0).set(DispatchOrder::getStatus, 1)

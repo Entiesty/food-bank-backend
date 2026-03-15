@@ -47,7 +47,7 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         Long merchantId = UserContext.getUserId();
         if (merchantId == null) throw new BusinessException("用户信息异常，请重新登录");
 
-        // 1. 生成物资表数据 fb_goods
+// 1. 生成物资表数据 fb_goods
         Goods goods = new Goods();
         goods.setMerchantId(merchantId);
         goods.setGoodsName(dto.getGoodsName());
@@ -55,6 +55,9 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         goods.setStock(dto.getStock());
         goods.setExpirationDate(dto.getExpirationDate());
         goods.setIsEmergencyOnly((byte) 0);
+
+        // 👇👇👇 🚨 核心修复：把图片URL存入实体类！
+        goods.setGoodsImageUrl(dto.getGoodsImageUrl());
 
         // 🚨 修复漏洞 1：把前端发来的 Tags 数组拼成字符串存库
         if (dto.getTags() != null && !dto.getTags().isEmpty()) {

@@ -15,4 +15,11 @@ public class StationRecommendVO {
 
     @Schema(description = "格式化后的距离 (如 1.25km)")
     private String distance;
+
+    // 👇👇👇 🚨 核心补漏：把这两个关键标识透传给前端
+    @Schema(description = "是否有冷柜/冷链储藏能力: 0-无, 1-有")
+    private Integer hasFreezer;
+
+    @Schema(description = "1:应急核心调度站(急时优先补给), 0:常态化")
+    private Integer isEmergencyHub;
 }

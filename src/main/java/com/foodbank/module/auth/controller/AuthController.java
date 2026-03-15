@@ -82,10 +82,7 @@ public class AuthController {
             throw new BusinessException("非法的角色选择！");
         }
 
-        // 🚨 核心逻辑新增：校验商家的资质凭证
-        if (reqRole == 2 && !StringUtils.hasText(dto.getIdentityProofUrl())) {
-            throw new BusinessException("爱心商家入驻必须上传营业执照图片");
-        }
+        // 🚨 核心修复 1：彻底删除旧版要求上传 identityProofUrl 的拦截逻辑！允许极速建档！
 
         long count = userService.count(new LambdaQueryWrapper<User>().eq(User::getPhone, dto.getPhone()));
         if (count > 0) throw new BusinessException("该手机号已被注册，请直接登录");
@@ -96,20 +93,29 @@ public class AuthController {
         user.setPassword(DigestUtils.md5DigestAsHex(dto.getPassword().getBytes()));
         user.setRole(reqRole);
         user.setCreditScore(0);
-        user.setUserTag(reqRole == 1 ? "ELDERLY" : "NORMAL");
+        if (reqRole == 1 && StringUtils.hasText(dto.getUserTag())) {
+            user.setUserTag(dto.getUserTag());
+        } else {
+            user.setUserTag("NORMAL"); // 其他角色默认 NORMAL
+        }
 
-        // 🚨 核心逻辑新增：落库凭证URL，并初始化核验状态为 0 (未核实)
+        // 👇👇👇 🚨 核心修复：就在这里，补上这三行代码，接住商家传来的业态！
+        if (reqRole == 2) {
+            user.setIndustryType(dto.getIndustryType());
+        }
+        // 👆👆👆
+
         user.setIdentityProofUrl(dto.getIdentityProofUrl());
-        user.setIsVerified((byte) 0);
+        user.setIsVerified((byte) 0); // 默认都是未核验
 
         user.setCreateTime(java.time.LocalDateTime.now());
-        user.setStatus((byte) (reqRole == 2 ? 0 : 1)); // 商家为 0 待审核
+
+        // 🚨 核心修复 2：刚注册的用户 status 统一给 1（正常）。真正的权限拦截交给 isVerified
+        user.setStatus((byte) 1);
 
         userService.save(user);
 
-        return reqRole == 2
-                ? Result.success(null, "注册成功！您的商家资质正在人工审核中，请留意后续通知。")
-                : Result.success(null, "注册成功！欢迎加入社区食物银行。");
+        return Result.success(null, "注册成功！请登录后前往个人中心完善资料。");
     }
 
     @Operation(summary = "2. 系统统一登录入口", description = "校验手机号与密码，包含状态机拦截")
@@ -121,12 +127,11 @@ public class AuthController {
         String md5Password = DigestUtils.md5DigestAsHex(password.getBytes());
         if (!user.getPassword().equals(md5Password)) throw new BusinessException("密码错误，请重新输入");
 
+        // 🚨 核心修复 3：去除商家的特判，只要 status == 0，统统视为被管理员强制熔断/封禁
         if (user.getStatus() == 0) {
-            if (user.getRole() == 2) throw new BusinessException("账号审核中：您的爱心商家资质尚未通过审批，请稍后");
-            throw new BusinessException("该账号已被系统封禁或尚未激活");
+            throw new BusinessException("该账号已被系统封禁或彻底熔断，请联系指挥中心处理");
         }
 
-        // 🚨 漏洞修复：移除了对 role == 2 的非法拦截！允许 1,2,3,4 均可登录
         if (user.getRole() < 1 || user.getRole() > 4) {
             throw new BusinessException("权限不足：系统暂未对该角色开放登录");
         }

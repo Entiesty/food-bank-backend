@@ -40,39 +40,48 @@ public class UserController {
         return Result.success(user);
     }
 
-    @Operation(summary = "2. 更新个人基本信息")
+    @Operation(summary = "2. 更新个人基本信息及各类角色专有档案")
     @PutMapping("/profile")
     public Result<Void> updateProfile(@Validated @RequestBody UserUpdateDTO dto) {
         Long userId = UserContext.getUserId();
 
-        // 使用 MyBatis-Plus 动态更新字段
         LambdaUpdateWrapper<User> updateWrapper = new LambdaUpdateWrapper<User>()
                 .eq(User::getUserId, userId)
                 .set(User::getUsername, dto.getUsername());
 
-        if (dto.getCurrentLon() != null) {
-            updateWrapper.set(User::getCurrentLon, dto.getCurrentLon());
-        }
-        if (dto.getCurrentLat() != null) {
-            updateWrapper.set(User::getCurrentLat, dto.getCurrentLat());
+        // 1. 通用 LBS 坐标更新
+        if (dto.getCurrentLon() != null && dto.getCurrentLat() != null) {
+            updateWrapper.set(User::getCurrentLon, dto.getCurrentLon())
+                    .set(User::getCurrentLat, dto.getCurrentLat());
         }
 
-        // 🚨 核心修复 1：把前端选的交通工具存进数据库
+        // 2. 核心凭证与状态回退机制
+        if (dto.getIdentityProofUrl() != null && !dto.getIdentityProofUrl().isEmpty()) {
+            updateWrapper.set(User::getIdentityProofUrl, dto.getIdentityProofUrl());
+            // 🚨 核心风控：只要动了资料/重新传了图，立刻打回待审核状态，防止作弊
+            updateWrapper.set(User::getIsVerified, (byte) 0);
+        }
+
+        // 3. 志愿者专属字段：运力载具
         if (dto.getVehicleType() != null) {
             updateWrapper.set(User::getVehicleType, dto.getVehicleType());
         }
 
-        // 🚨 核心修复 2：把前端上传的资质照片存进数据库，并重置审核状态！
-        if (StringUtils.hasText(dto.getIdentityProofUrl())) {
-            updateWrapper.set(User::getIdentityProofUrl, dto.getIdentityProofUrl());
-            // 如果用户重新上传了材料，应该把状态置为“待审核(0)”以防作弊
-            updateWrapper.set(User::getIsVerified, (byte) 0);
+        // 4. 受赠方专属字段：门牌号与健康信息
+        if (dto.getDoorNumber() != null) {
+            updateWrapper.set(User::getDoorNumber, dto.getDoorNumber());
+        }
+        if (dto.getEmergencyPhone() != null) {
+            updateWrapper.set(User::getEmergencyPhone, dto.getEmergencyPhone());
+        }
+        if (dto.getHealthRemark() != null) {
+            updateWrapper.set(User::getHealthRemark, dto.getHealthRemark());
         }
 
         boolean success = userService.update(updateWrapper);
-
         if (!success) throw new BusinessException("资料更新失败，请重试");
-        return Result.success(null, "资料及偏好设置更新成功！");
+
+        return Result.success(null, "资料已保存至系统，并提交至风控审核队列！");
     }
 
     @Operation(summary = "3. 修改密码")

@@ -100,7 +100,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                     .eq(Goods::getMerchantId, userId));
 
             vo.setTotalDonatedGoods((int) totalGoods);
-            vo.setTotalHelpCount((int) totalGoods * 3 + 12);
+
+            // 🚨 核心修复：消灭造假的“幽灵数据”
+            if (totalGoods == 0) {
+                vo.setTotalHelpCount(0); // 没捐过就是0
+            } else {
+                vo.setTotalHelpCount((int) totalGoods * 3 + 2); // 有捐赠时，基础倍数加上合理浮动
+            }
         } else if (user.getRole() == 1) {
             vo.setUserTag(user.getUserTag());
             long received = dispatchOrderMapper.selectCount(new LambdaQueryWrapper<DispatchOrder>()

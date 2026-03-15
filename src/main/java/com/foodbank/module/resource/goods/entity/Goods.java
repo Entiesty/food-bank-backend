@@ -59,4 +59,8 @@ public class Goods implements Serializable {
 
     @TableField("weight_level")
     private Integer weightLevel;
+
+    // 👇👇👇 🚨 补上这一段：物资实拍图持久化字段
+    @TableField("goods_image_url")
+    private String goodsImageUrl;
 }

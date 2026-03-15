@@ -50,4 +50,8 @@ public class DonateDTO {
     @NotNull(message = "重量评估不能为空")
     @Schema(description = "重量级别: 1-轻便, 2-偏重, 3-极重")
     private Integer weightLevel;
+
+    // 👇👇👇 🚨 补上这一段：接收物资实拍图
+    @Schema(description = "物资实拍图URL")
+    private String goodsImageUrl;
 }
