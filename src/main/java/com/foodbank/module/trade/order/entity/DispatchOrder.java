@@ -58,7 +58,6 @@ public class DispatchOrder implements Serializable {
     @TableField("create_time")
     private LocalDateTime createTime;
 
-    // 🚨 终极闭环：物资明细与数量
     @Schema(description = "具体物资名称 (如: 康师傅矿泉水)")
     @TableField("goods_name")
     private String goodsName;
@@ -72,13 +71,11 @@ public class DispatchOrder implements Serializable {
     @TableField(exist = false)
     private String targetName;
 
-    // 👇 追加这两个字段，用来接收真实的起点经纬度
     @TableField(exist = false)
     private BigDecimal sourceLon;
     @TableField(exist = false)
     private BigDecimal sourceLat;
 
-    // 🚨 新增：用来接收调度引擎写下的“死亡笔记（异常原因）”
     @Schema(description = "调度异常原因/滞留标签")
     @TableField("exception_reason")
     private String exceptionReason;
@@ -91,8 +88,11 @@ public class DispatchOrder implements Serializable {
     @TableField("recipient_comment")
     private String recipientComment;
 
-    // 🚨 终极闭环：隐式解析出的需求标签
     @Schema(description = "需求特征标签(隐式解析)")
     @TableField("required_tags")
     private String requiredTags;
+
+    @Schema(description = "6位自提取件码")
+    @TableField("pickup_code")
+    private String pickupCode;
 }

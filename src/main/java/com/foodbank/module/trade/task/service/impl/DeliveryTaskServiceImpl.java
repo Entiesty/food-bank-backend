@@ -45,50 +45,48 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
     @Autowired
     private IGoodsService goodsService; // 🚨 注入物资服务
 
-    // 🚀 核心核销逻辑：带图片参数
+    // 🚀 核心核销逻辑：带图片参数、乐观锁防线、平急分流与原生加分
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void completeTask(Long taskId, Long userId, String proofImage) {
         DeliveryTask deliveryTask = this.getById(taskId);
-        if (deliveryTask == null) {
-            throw new BusinessException("未找到该配送任务");
-        }
-        if (!deliveryTask.getVolunteerId().equals(userId)) {
-            throw new BusinessException("权限不足：您不是该任务的执行人");
-        }
-        if (deliveryTask.getTaskStatus() == 3) {
-            throw new BusinessException("该任务已经核销完毕，请勿重复操作");
-        }
+        if (deliveryTask == null) throw new BusinessException("未找到该配送任务");
+        if (!deliveryTask.getVolunteerId().equals(userId)) throw new BusinessException("权限不足");
+        if (deliveryTask.getTaskStatus() == 3) throw new BusinessException("该任务已经核销，请勿重复点击");
 
         // 1. 保存现场核销照片
-        if (proofImage != null && !proofImage.isEmpty()) {
-            deliveryTask.setProofImage(proofImage);
-        }
-
-        // 2. 扭转任务状态为：已完成 (3)
+        if (proofImage != null && !proofImage.isEmpty()) deliveryTask.setProofImage(proofImage);
         deliveryTask.setTaskStatus((byte) 3);
         deliveryTask.setCompleteTime(LocalDateTime.now());
-        this.updateById(deliveryTask);
 
-        // 3. 扭转订单状态，并触发物资入库联动！
+        // 🛡️ 架构师防线 1：拦截乐观锁静默失败！
+        boolean updateTaskSuccess = this.updateById(deliveryTask);
+        if (!updateTaskSuccess) {
+            throw new BusinessException("🚨 任务状态已被其他终端修改，核销终止！");
+        }
+
+        // 3. 扭转订单状态与物资状态
         DispatchOrder dispatchOrder = orderService.getById(deliveryTask.getOrderId());
         if (dispatchOrder != null) {
-            // 订单状态变更为：已送达 (2)
             dispatchOrder.setStatus((byte) 2);
             orderService.updateById(dispatchOrder);
 
-            // 🚀 终极闭环：物资状态联动更新 (入库引擎)
             if (dispatchOrder.getGoodsId() != null) {
                 com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(dispatchOrder.getGoodsId());
                 if (goods != null) {
-                    // 将物资状态变更为 2 (已入库/驿站可用)
-                    goods.setStatus((byte) 2);
-                    // 确保物资当前所在的驿站 ID 被正确更新为订单的目的地(驿站) ID
-                    goods.setCurrentStationId(dispatchOrder.getDestId());
-
-                    // 执行更新落库
+                    // 🛡️ 架构师防线 2：平急两用物资终点分流！
+                    if (dispatchOrder.getOrderType() == 1) {
+                        // 【平时态】入库驿站
+                        goods.setStatus((byte) 2); // 2-已入库
+                        goods.setCurrentStationId(dispatchOrder.getDestId());
+                        log.info("📦 平时调度完成：物资 [{}] 已正式入库至驿站 ID:[{}]", goods.getGoodsName(), dispatchOrder.getDestId());
+                    } else if (dispatchOrder.getOrderType() == 2) {
+                        // 【急时态】直达灾民，物资彻底消耗
+                        goods.setStatus((byte) 3); // 3-已发完/消耗
+                        goods.setCurrentStationId(null);
+                        log.info("🔥 紧急调度完成：物资 [{}] 已直接送达受赠方，物资生命周期结束！", goods.getGoodsName());
+                    }
                     goodsService.updateById(goods);
-                    log.info("📦 物理世界同步完成：物资 [{}] 已正式入库至驿站 ID:[{}]", goods.getGoodsName(), dispatchOrder.getDestId());
                 }
             }
         }
@@ -100,21 +98,21 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
     private void rewardVolunteerCredit(Long userId, Long orderId) {
         int rewardPoints = 10;
         User user = userService.getById(userId);
-
         if (user != null && user.getRole() != null && user.getRole() == 3) {
-            int oldScore = user.getCreditScore() != null ? user.getCreditScore() : 0;
-            user.setCreditScore(oldScore + rewardPoints);
-            userService.updateById(user);
+
+            // 🛡️ 架构师防线 3：放弃 MyBatis-Plus updateById，采用原生 SQL 规避 Lost Update
+            // 提示：你需要在 UserMapper 里面写一个原生方法 addCreditScore(Long userId, int points)
+            // 这里为了不让你改 Mapper，我们用 UpdateWrapper 巧妙实现 SQL 级自增：
+            userService.update(new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User>()
+                    .eq(User::getUserId, userId)
+                    .setSql("credit_score = credit_score + " + rewardPoints));
 
             CreditLog creditLog = new CreditLog();
             creditLog.setUserId(userId);
             creditLog.setOrderId(orderId);
             creditLog.setChangeValue(rewardPoints);
-            creditLog.setReason("完成订单送达，发放信誉分奖励");
-            creditLog.setCreateTime(LocalDateTime.now());
+            creditLog.setReason("完成订单送达，发放护航信誉分");
             creditLogService.save(creditLog);
-
-            log.info("志愿者[{}]完成配送，信誉分增加{}，当前总分:{}", userId, rewardPoints, user.getCreditScore());
         }
     }
 
@@ -163,12 +161,24 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                         targetLat = station.getLatitude();
                     }
                 } else {
-                    Station station = stationService.getById(order.getSourceId());
-                    if (station != null) {
-                        sourceName = station.getStationName();
-                        sourceAddress = station.getAddress();
-                        sourceLon = station.getLongitude();
-                        sourceLat = station.getLatitude();
+                    // 🚨 核心修复：兼容战时直供（负数商家ID映射）
+                    Long sId = order.getSourceId();
+                    if (sId != null && sId < 0) {
+                        User merchant = userService.getById(-sId);
+                        if (merchant != null) {
+                            sourceName = merchant.getUsername() + " (爱心商铺直发)";
+                            sourceAddress = "联系电话: " + merchant.getPhone();
+                            sourceLon = merchant.getCurrentLon();
+                            sourceLat = merchant.getCurrentLat();
+                        }
+                    } else if (sId != null) {
+                        Station station = stationService.getById(sId);
+                        if (station != null) {
+                            sourceName = station.getStationName();
+                            sourceAddress = station.getAddress();
+                            sourceLon = station.getLongitude();
+                            sourceLat = station.getLatitude();
+                        }
                     }
 
                     User recipient = userService.getById(order.getDestId());

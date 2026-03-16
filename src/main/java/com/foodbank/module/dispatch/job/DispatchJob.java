@@ -36,14 +36,16 @@ public class DispatchJob {
     private IGoodsService goodsService;
 
     /**
-     * 1. 自动撮合引擎：每隔 5 秒执行一次扫描 (保留你的原逻辑)
+     * 1. 自动撮合引擎：每隔 5 秒执行一次扫描
      */
     @Scheduled(fixedDelay = 5000)
     @Transactional(rollbackFor = Exception.class)
     public void executeMatchEngine() {
+        // 🚨 这里加了 isNull 拦截，防止重复扫描已被接管的订单
         List<DispatchOrder> pendingDispatchOrders = orderService.list(new LambdaQueryWrapper<DispatchOrder>()
                 .eq(DispatchOrder::getStatus, 0)
-                .eq(DispatchOrder::getOrderType, 2));
+                .eq(DispatchOrder::getOrderType, 2)
+                .isNull(DispatchOrder::getSourceId));
 
         if (pendingDispatchOrders.isEmpty()) return;
 
@@ -57,7 +59,11 @@ public class DispatchJob {
 
                     dispatchOrder.setGoodsId(winner.getGoods().getGoodsId());
                     dispatchOrder.setSourceId(winner.getStation().getStationId());
-                    dispatchOrder.setStatus((byte) 1);
+
+                    // 🚨 核心修复：用真实的物资名称和数量，彻底覆盖掉原始的“急需盒饭”描述！
+                    dispatchOrder.setGoodsName(winner.getGoods().getGoodsName());
+                    dispatchOrder.setGoodsCount(1);
+
                     orderService.updateById(dispatchOrder);
                 }
             } catch (Exception e) {

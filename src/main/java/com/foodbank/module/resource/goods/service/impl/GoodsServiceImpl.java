@@ -47,7 +47,7 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         Long merchantId = UserContext.getUserId();
         if (merchantId == null) throw new BusinessException("用户信息异常，请重新登录");
 
-// 1. 生成物资表数据 fb_goods
+        // 1. 生成物资表数据 fb_goods
         Goods goods = new Goods();
         goods.setMerchantId(merchantId);
         goods.setGoodsName(dto.getGoodsName());
@@ -55,26 +55,19 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         goods.setStock(dto.getStock());
         goods.setExpirationDate(dto.getExpirationDate());
         goods.setIsEmergencyOnly((byte) 0);
-
-        // 👇👇👇 🚨 核心修复：把图片URL存入实体类！
         goods.setGoodsImageUrl(dto.getGoodsImageUrl());
 
-        // 🚨 修复漏洞 1：把前端发来的 Tags 数组拼成字符串存库
         if (dto.getTags() != null && !dto.getTags().isEmpty()) {
             goods.setTags(String.join(",", dto.getTags()));
         }
 
-        // 🚨 修复漏洞 2：接收 T 恤尺码法传来的体积与重量
         goods.setVolumeLevel(dto.getVolumeLevel() != null ? dto.getVolumeLevel() : 1);
         goods.setWeightLevel(dto.getWeightLevel() != null ? dto.getWeightLevel() : 1);
 
-        // 🚨 修复漏洞 3：智能动态路由分发 (平急两用枢纽)
         if (dto.getTargetOrderId() != null) {
-            // 【战时模式】点对点越级直达，不需要进驿站！
             goods.setCurrentStationId(null);
-            goods.setStatus((byte) 0); // 待取货，直接给骑士抢单送老人
+            goods.setStatus((byte) 0); // 待取货
         } else {
-            // 【平时模式】捐到指定驿站
             goods.setCurrentStationId(dto.getCurrentStationId());
             goods.setStatus((byte) 0);
         }
@@ -84,48 +77,54 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
 
         // 2. 生成调度大盘工单 fb_order
         if (dto.getTargetOrderId() != null) {
-            // 🚀 终极闭环：复活大屏上那个因没有物资而标红的求救单！
+            // 🚨 核心修复 2：定向直连缝合！复活那个停滞的 SOS 单！
             DispatchOrder targetOrder = dispatchOrderMapper.selectById(dto.getTargetOrderId());
-            if (targetOrder != null) {
+            if (targetOrder != null && targetOrder.getStatus() == 0) {
                 targetOrder.setGoodsId(goods.getGoodsId());
-                targetOrder.setExceptionReason(null); // 抹除系统死因记录
-                targetOrder.setStatus((byte) 0); // 重新流转回抢单大厅
+                targetOrder.setExceptionReason(null); // 抹除死因
+                targetOrder.setStatus((byte) 0); // 保持在待抢单状态
 
-                // 将商铺位置设为这笔救援订单的物理起点
+                // 把商铺坐标、具体的南瓜粥名字和数量，统统喂给老人家的需求单
                 User merchant = userMapper.selectById(merchantId);
                 if (merchant != null) {
                     targetOrder.setSourceLon(merchant.getCurrentLon());
                     targetOrder.setSourceLat(merchant.getCurrentLat());
                 }
                 targetOrder.setSourceId(merchantId);
-                dispatchOrderMapper.updateById(targetOrder);
-                log.info("🚨 战时响应：商家 {} 已接管求救单 {}！系统转入 P2P 直达模式！", merchantId, targetOrder.getOrderSn());
-            }
-        } else {
-            // 正常产生捐赠入库单
-            DispatchOrder order = new DispatchOrder();
-            order.setOrderSn("DON-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase());
-            order.setOrderType((byte) 1); // 1-供应单(商家->驿站)
-            order.setGoodsId(goods.getGoodsId());
-            order.setRequiredCategory(dto.getCategory());
-            order.setGoodsName(dto.getGoodsName());
-            order.setGoodsCount(dto.getStock());
-            order.setSourceId(merchantId);
-            order.setDestId(dto.getCurrentStationId());
-            order.setDeliveryMethod((byte) 1); // 志愿配送
-            order.setUrgencyLevel((byte) 5);
-            order.setStatus((byte) 0);
+                targetOrder.setGoodsName(goods.getGoodsName());
+                targetOrder.setGoodsCount(goods.getStock());
 
-            Station station = stationMapper.selectById(dto.getCurrentStationId());
-            if (station != null) {
-                order.setTargetLon(station.getLongitude());
-                order.setTargetLat(station.getLatitude());
+                dispatchOrderMapper.updateById(targetOrder);
+                log.info("🚨 战时响应：商家 {} 已接管求救单 {}！物资名更新为 {}，系统转入 P2P 直达模式！",
+                        merchantId, targetOrder.getOrderSn(), goods.getGoodsName());
+
+                // 【重中之重】：直接 return，坚决不生成废弃的 DON 单！
+                return;
             }
-            dispatchOrderMapper.insert(order);
         }
+
+        // 只有平时态，且没传 TargetOrderId，才会走到这里生成普通的 DON 单
+        DispatchOrder order = new DispatchOrder();
+        order.setOrderSn("DON-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase());
+        order.setOrderType((byte) 1); // 1-供应单(商家->驿站)
+        order.setGoodsId(goods.getGoodsId());
+        order.setRequiredCategory(dto.getCategory());
+        order.setGoodsName(dto.getGoodsName());
+        order.setGoodsCount(dto.getStock());
+        order.setSourceId(merchantId);
+        order.setDestId(dto.getCurrentStationId());
+        order.setDeliveryMethod((byte) 1); // 志愿配送
+        order.setUrgencyLevel((byte) 5);
+        order.setStatus((byte) 0);
+
+        Station station = stationMapper.selectById(dto.getCurrentStationId());
+        if (station != null) {
+            order.setTargetLon(station.getLongitude());
+            order.setTargetLat(station.getLatitude());
+        }
+        dispatchOrderMapper.insert(order);
     }
 
-    // 后续方法保持不变...
     @Override
     public boolean deductStockSafe(Long goodsId, int num) {
         return this.update(new LambdaUpdateWrapper<Goods>().eq(Goods::getGoodsId, goodsId).ge(Goods::getStock, num).setSql("stock = stock - " + num));

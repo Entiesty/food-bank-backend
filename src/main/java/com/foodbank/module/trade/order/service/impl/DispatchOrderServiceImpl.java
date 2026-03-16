@@ -46,6 +46,10 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
     @Autowired
     private ICreditLogService creditLogService;
 
+    @Autowired
+    @org.springframework.context.annotation.Lazy
+    private com.foodbank.module.resource.goods.service.IGoodsService goodsService;
+
     private void enrichOrderNames(List<DispatchOrder> orders) {
         if (orders == null || orders.isEmpty()) return;
         for (DispatchOrder order : orders) {
@@ -64,11 +68,21 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                 }
             } else {
                 if (order.getSourceId() != null) {
-                    Station station = stationService.getById(order.getSourceId());
-                    if (station != null) {
-                        order.setSourceName(station.getStationName());
-                        order.setSourceLon(station.getLongitude());
-                        order.setSourceLat(station.getLatitude());
+                    Station station = null;
+                    if (order.getSourceId() < 0) {
+                        User merchant = userService.getById(-order.getSourceId());
+                        if (merchant != null) {
+                            order.setSourceName(merchant.getUsername() + " (爱心商铺直发)");
+                            order.setSourceLon(merchant.getCurrentLon());
+                            order.setSourceLat(merchant.getCurrentLat());
+                        }
+                    } else {
+                        station = stationService.getById(order.getSourceId());
+                        if (station != null) {
+                            order.setSourceName(station.getStationName());
+                            order.setSourceLon(station.getLongitude());
+                            order.setSourceLat(station.getLatitude());
+                        }
                     }
                 }
                 if (order.getDestId() != null) {
@@ -93,7 +107,6 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
     public Page<DispatchOrder> getAdminOrderPage(int pageNum, int pageSize, String orderSn, Byte status, Byte deliveryMethod) {
         Page<DispatchOrder> pageReq = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<DispatchOrder> wrapper = new LambdaQueryWrapper<>();
-
         if (orderSn != null && !orderSn.trim().isEmpty()) wrapper.like(DispatchOrder::getOrderSn, orderSn);
         if (status != null) wrapper.eq(DispatchOrder::getStatus, status);
         if (deliveryMethod != null) wrapper.eq(DispatchOrder::getDeliveryMethod, deliveryMethod);
@@ -115,10 +128,31 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         dispatchOrder.setOrderType((byte) 2);
         dispatchOrder.setDestId(currentUserId);
         dispatchOrder.setRequiredCategory(dto.getRequiredCategory());
-        dispatchOrder.setUrgencyLevel(dto.getUrgencyLevel().byteValue());
+        dispatchOrder.setRequiredTags(dto.getRequiredTags() != null ? String.join(",", dto.getRequiredTags()) : null);
+        dispatchOrder.setUrgencyLevel(dto.getUrgencyLevel() != null ? dto.getUrgencyLevel().byteValue() : 1);
         dispatchOrder.setTargetLon(dto.getTargetLon());
         dispatchOrder.setTargetLat(dto.getTargetLat());
-        dispatchOrder.setStatus((byte) 0);
+
+        dispatchOrder.setDeliveryMethod(dto.getDeliveryMethod() != null ? dto.getDeliveryMethod().byteValue() : (byte) 1);
+
+        if (dispatchOrder.getDeliveryMethod() == 2 && dto.getGoodsId() != null) {
+            // 【原子库存预扣】
+            com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(dto.getGoodsId());
+            if (goods == null || goods.getStock() < 1) {
+                throw new BusinessException("手慢了！该物资已被其他街坊抢空了！");
+            }
+            goods.setStock(goods.getStock() - 1);
+            if (goods.getStock() == 0) goods.setStatus((byte) 3);
+            goodsService.updateById(goods);
+
+            String code = String.valueOf((int)((Math.random() * 9 + 1) * 100000));
+            dispatchOrder.setPickupCode(code);
+            dispatchOrder.setGoodsId(dto.getGoodsId());
+            dispatchOrder.setSourceId(dto.getSourceId());
+            dispatchOrder.setStatus((byte) 1); // 越过0，直接待取货
+        } else {
+            dispatchOrder.setStatus((byte) 0);
+        }
 
         String specificName = dto.getDescription() != null ? dto.getDescription() : dto.getRequiredCategory();
         dispatchOrder.setGoodsName("急需：" + specificName);
@@ -131,9 +165,12 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
     @Override
     public Page<AvailableOrderVO> getAvailableOrderPage(int pageNum, int pageSize) {
         Page<DispatchOrder> pageReq = new Page<>(pageNum, pageSize);
+        // 拦截自提单与脏数据
         Page<DispatchOrder> orderPage = this.page(pageReq, new LambdaQueryWrapper<DispatchOrder>()
                 .eq(DispatchOrder::getStatus, 0)
+                .eq(DispatchOrder::getDeliveryMethod, 1)
                 .isNotNull(DispatchOrder::getSourceId)
+                .and(w -> w.isNotNull(DispatchOrder::getDestId).or().isNotNull(DispatchOrder::getTargetLon))
                 .orderByDesc(DispatchOrder::getUrgencyLevel)
                 .orderByDesc(DispatchOrder::getCreateTime));
 
@@ -163,13 +200,24 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     targetLat = station.getLatitude();
                 }
             } else {
-                Station station = stationService.getById(order.getSourceId());
-                if (station != null) {
-                    sourceName = station.getStationName();
-                    sourceAddress = station.getAddress();
-                    sourceLon = station.getLongitude();
-                    sourceLat = station.getLatitude();
+                if (order.getSourceId() < 0) {
+                    User merchant = userService.getById(-order.getSourceId());
+                    if (merchant != null) {
+                        sourceName = merchant.getUsername() + " (爱心商铺直发)";
+                        sourceAddress = "联系电话: " + merchant.getPhone();
+                        sourceLon = merchant.getCurrentLon();
+                        sourceLat = merchant.getCurrentLat();
+                    }
+                } else {
+                    Station station = stationService.getById(order.getSourceId());
+                    if (station != null) {
+                        sourceName = station.getStationName();
+                        sourceAddress = station.getAddress();
+                        sourceLon = station.getLongitude();
+                        sourceLat = station.getLatitude();
+                    }
                 }
+
                 User recipient = userService.getById(order.getDestId());
                 if (recipient != null) {
                     targetName = recipient.getUsername() + " (求助市民)";
@@ -187,15 +235,12 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     .createTime(order.getCreateTime()).build();
         }).collect(Collectors.toList());
 
-        // 🚀 高光时刻：触发千人千面调度引擎
         Long userId = UserContext.getUserId();
         User volunteer = userService.getById(userId);
         if (volunteer != null) {
             Double volLon = volunteer.getCurrentLon() != null ? volunteer.getCurrentLon().doubleValue() : null;
             Double volLat = volunteer.getCurrentLat() != null ? volunteer.getCurrentLat().doubleValue() : null;
             int creditScore = volunteer.getCreditScore() != null ? volunteer.getCreditScore() : 100;
-
-            // 将大厅的原始订单扔进算法引擎进行重排序
             dispatchStrategy.rankOrdersForVolunteer(voList, volLon, volLat, creditScore);
         }
 
@@ -226,6 +271,16 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         order.setStatus((byte) 3);
         boolean updated = this.updateById(order);
         if (!updated) throw new BusinessException("撤销失败，请重试");
+
+        // 【库存兜底回滚】
+        if (order.getDeliveryMethod() != null && order.getDeliveryMethod() == 2 && order.getGoodsId() != null) {
+            com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(order.getGoodsId());
+            if (goods != null) {
+                goods.setStock(goods.getStock() + 1);
+                if (goods.getStatus() == 3) goods.setStatus((byte) 2);
+                goodsService.updateById(goods);
+            }
+        }
     }
 
     @Override
@@ -235,18 +290,13 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         if (order == null || !order.getDestId().equals(userId)) {
             throw new BusinessException("非法操作：订单不存在或您不是该订单的受赠方");
         }
-        if (order.getStatus() != 2) {
-            throw new BusinessException("订单当前状态无法确认收货");
-        }
+        if (order.getStatus() != 2) throw new BusinessException("订单当前状态无法确认收货");
 
-        // 1. 更新订单状态为 3 (彻底闭环)，并记录评分
         order.setStatus((byte) 3);
         order.setRecipientRating(rating);
         order.setRecipientComment(comment);
         this.updateById(order);
 
-        // 2. 追溯是谁送的这单 (查询 fb_task)
-        // 注意：你需要注入 IDeliveryTaskService taskService
         DeliveryTask task = taskService.getOne(new LambdaQueryWrapper<DeliveryTask>()
                 .eq(DeliveryTask::getOrderId, orderId)
                 .eq(DeliveryTask::getTaskStatus, 3)
@@ -254,15 +304,13 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
 
         if (task != null) {
             Long volunteerId = task.getVolunteerId();
-            // 3. ⭐️ 动态信誉分核算引擎
             int creditDelta = 0;
             String reason = "订单完结评价: " + rating + "星";
 
-            if (rating == 5) creditDelta = 5;       // 五星好评，额外奖励5分
-            else if (rating == 4) creditDelta = 2;  // 四星，奖励2分
-            else if (rating == 3) creditDelta = 0;  // 三星，不奖不扣
-            else if (rating == 2) creditDelta = -5; // 二星差评，扣5分
-            else if (rating == 1) creditDelta = -15;// 一星恶劣，重罚15分！
+            if (rating == 5) creditDelta = 5;
+            else if (rating == 4) creditDelta = 2;
+            else if (rating == 2) creditDelta = -5;
+            else if (rating == 1) creditDelta = -15;
 
             if (creditDelta != 0) {
                 User volunteer = userService.getById(volunteerId);
@@ -271,7 +319,6 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     volunteer.setCreditScore(oldScore + creditDelta);
                     userService.updateById(volunteer);
 
-                    // 记录信誉分流水
                     CreditLog creditLog = new CreditLog();
                     creditLog.setUserId(volunteerId);
                     creditLog.setOrderId(orderId);
@@ -282,5 +329,39 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                 }
             }
         }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void verifyPickupCode(String pickupCode) {
+        Long verifierId = UserContext.getUserId();
+        User verifier = userService.getById(verifierId);
+
+        if (verifier.getRole() == null || (verifier.getRole() != 2 && verifier.getRole() != 4)) {
+            throw new BusinessException("权限不足：仅系统管理员(网格员)或商家可执行线下核销！");
+        }
+
+        DispatchOrder order = this.getOne(new LambdaQueryWrapper<DispatchOrder>()
+                .eq(DispatchOrder::getPickupCode, pickupCode)
+                .eq(DispatchOrder::getDeliveryMethod, 2));
+
+        if (order == null) throw new BusinessException("取件码错误或该订单不存在！");
+        if (order.getStatus() == 3) throw new BusinessException("该取件码已被核销过，请勿重复操作！");
+        if (order.getStatus() == 0) throw new BusinessException("物资还在准备中，暂不能核销！");
+
+        order.setStatus((byte) 3);
+        this.updateById(order);
+
+        int oldScore = verifier.getCreditScore() != null ? verifier.getCreditScore() : 0;
+        verifier.setCreditScore(oldScore + 2);
+        userService.updateById(verifier);
+
+        CreditLog creditLog = new CreditLog();
+        creditLog.setUserId(verifierId);
+        creditLog.setOrderId(order.getOrderId());
+        creditLog.setChangeValue(2);
+        creditLog.setReason("协助处理线下扫码自提业务");
+        creditLog.setCreateTime(LocalDateTime.now());
+        creditLogService.save(creditLog);
     }
 }

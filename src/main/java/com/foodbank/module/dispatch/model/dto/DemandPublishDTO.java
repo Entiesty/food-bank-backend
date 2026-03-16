@@ -21,13 +21,19 @@ public class DemandPublishDTO {
 
     @NotNull(message = "目标纬度不能为空")
     private BigDecimal targetLat;
-    
+
     private String description;
 
     @Schema(description = "根据老人行为隐式推导出的需求标签数组")
     private List<String> requiredTags;
 
-    // 🚨 本次新增：履约方式 (1-志愿者配送上门, 2-居民线下自提)
     @NotNull(message = "请选择取货方式")
     private Integer deliveryMethod;
+
+    // 🚨 本次新增：为了实现精准的【自提锁库存沙箱】，必须加上以下两个字段
+    @Schema(description = "明确预约的物资ID(自提用)")
+    private Long goodsId;
+
+    @Schema(description = "明确预约的物理据点ID(自提用)")
+    private Long sourceId;
 }

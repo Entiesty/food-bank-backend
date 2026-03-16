@@ -2,4 +2,15 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.foodbank.module.resource.goods.mapper.GoodsMapper">
 
+    <select id="selectAvailableGoodsByStation" resultType="com.foodbank.module.resource.goods.entity.Goods">
+        SELECT * FROM fb_goods
+        WHERE current_station_id = #{stationId}
+        AND status = 2
+        AND stock > 0
+        AND category IN
+        <foreach item="cat" collection="categories" open="(" separator="," close=")">
+            #{cat}
+        </foreach>
+    </select>
+
 </mapper>

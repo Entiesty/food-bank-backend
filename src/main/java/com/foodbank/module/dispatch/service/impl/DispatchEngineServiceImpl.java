@@ -17,6 +17,8 @@ import com.foodbank.module.resource.station.entity.Station;
 import com.foodbank.module.resource.station.service.IStationService;
 import com.foodbank.module.system.user.entity.User;
 import com.foodbank.module.system.user.service.IUserService;
+import com.foodbank.module.trade.order.mapper.DispatchOrderMapper;
+import com.foodbank.module.resource.goods.mapper.GoodsMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.geo.GeoResults;
@@ -50,20 +52,18 @@ public class DispatchEngineServiceImpl {
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
 
+    // 🚨 注入新增加的自定义 Mapper
+    @Autowired
+    private DispatchOrderMapper dispatchOrderMapper;
+    @Autowired
+    private GoodsMapper goodsMapper;
+
     public List<DispatchCandidateVO> smartMatchStations(DispatchOrder dispatchOrder) {
         log.info("📡 启动智能派单匹配，坐标:[{},{}], 需求大类:{}, 需求标签:{}",
                 dispatchOrder.getTargetLon(), dispatchOrder.getTargetLat(),
                 dispatchOrder.getRequiredCategory(), dispatchOrder.getRequiredTags());
 
-        // 🚨 扩圈：同城级 15.0 公里
-        GeoResults<RedisGeoCommands.GeoLocation<String>> geoResults =
-                stationService.searchNearbyStations(dispatchOrder.getTargetLon().doubleValue(), dispatchOrder.getTargetLat().doubleValue(), 15.0);
-
-        if (geoResults == null || geoResults.getContent().isEmpty()) {
-            return new ArrayList<>();
-        }
-
-        // 🚨 领域大类映射 (Domain Mapping)
+        // 1. 领域大类映射 (Domain Mapping)
         List<String> targetCategories = new ArrayList<>();
         targetCategories.add(dispatchOrder.getRequiredCategory());
         String reqCat = dispatchOrder.getRequiredCategory();
@@ -72,61 +72,108 @@ public class DispatchEngineServiceImpl {
         else if ("医疗与特需".equals(reqCat)) targetCategories.addAll(Arrays.asList("医疗用品", "助残设备", "营养品"));
         else if ("应急与生活".equals(reqCat)) targetCategories.addAll(Arrays.asList("饮用水", "应急食品", "应急装备", "生活用品", "防寒衣物"));
 
+        // 解析并清洗 JSON 格式的标签
         List<String> reqTags = new ArrayList<>();
         if (dispatchOrder.getRequiredTags() != null && !dispatchOrder.getRequiredTags().isEmpty()) {
-            reqTags = Arrays.asList(dispatchOrder.getRequiredTags().split(","));
+            reqTags = Arrays.asList(dispatchOrder.getRequiredTags().replaceAll("[\"\\[\\]\\s]", "").split(","));
         }
         boolean hasTagRequirement = !reqTags.isEmpty();
-
-        List<DispatchCandidateVO> candidates = new ArrayList<>();
         String originLonLat = dispatchOrder.getTargetLon() + "," + dispatchOrder.getTargetLat();
+        List<DispatchCandidateVO> candidates = new ArrayList<>();
 
-        for (var result : geoResults.getContent()) {
-            Long stationId = Long.parseLong(result.getContent().getName());
+        // ==========================================================
+        // 🚀 L0级：战时点对点直达匹配 (Point-to-Point)
+        // ==========================================================
+        List<DispatchOrder> directSupplyOrders = dispatchOrderMapper.selectPendingDirectSupplyOrders(targetCategories);
 
-            List<Goods> stationGoodsList = goodsService.list(new LambdaQueryWrapper<Goods>()
-                    .eq(Goods::getCurrentStationId, stationId)
-                    .in(Goods::getCategory, targetCategories)
-                    .eq(Goods::getStatus, 2)
-                    .gt(Goods::getStock, 0));
+        for (DispatchOrder supply : directSupplyOrders) {
+            Goods goods = goodsService.getById(supply.getGoodsId());
+            if (goods == null || goods.getStock() <= 0) continue;
 
-            Goods bestMatchedGoods = null;
-            double maxTagScore = -1.0;
+            User merchant = userService.getById(supply.getSourceId());
+            if (merchant == null || merchant.getCurrentLon() == null) continue;
 
-            for (Goods goods : stationGoodsList) {
-                double currentTagScore = 1.0;
-                if (hasTagRequirement) {
-                    if (goods.getTags() == null || goods.getTags().isEmpty()) {
-                        currentTagScore = 0.0;
-                    } else {
-                        List<String> goodsTags = Arrays.asList(goods.getTags().split(","));
-                        long matchCount = reqTags.stream().filter(goodsTags::contains).count();
-                        if (matchCount == 0) continue;
-                        currentTagScore = (double) matchCount / reqTags.size();
-                    }
-                }
-                if (currentTagScore > maxTagScore) {
-                    maxTagScore = currentTagScore;
-                    bestMatchedGoods = goods;
-                }
-            }
+            double currentTagScore = calculateTagScore(hasTagRequirement, reqTags, goods.getTags());
+            if (hasTagRequirement && currentTagScore == 0.0) continue;
 
-            if (bestMatchedGoods == null) continue;
-            Station station = stationService.getById(stationId);
-            if (station == null) continue;
-
-            String destLonLat = station.getLongitude() + "," + station.getLatitude();
+            String destLonLat = merchant.getCurrentLon() + "," + merchant.getCurrentLat();
             try {
                 AmapDirectionResponse.Path path = amapClientService.getRidingDistance(originLonLat, destLonLat);
+                if (path.distance() > 15000) continue; // 超出15km直接舍弃
+
+                // 💡 架构师黑魔法：将商家伪装成“虚拟站点”，ID取负数。这样不改表结构就能兼容现有骑士履约闭环
+                Station fakeStation = new Station();
+                fakeStation.setStationId(-merchant.getUserId());
+                fakeStation.setStationName("🚨紧急直发: " + merchant.getUsername());
+                fakeStation.setLongitude(merchant.getCurrentLon());
+                fakeStation.setLatitude(merchant.getCurrentLat());
+                fakeStation.setAddress("由爱心商铺直线护送");
+
                 candidates.add(DispatchCandidateVO.builder()
-                        .station(station).goods(bestMatchedGoods)
+                        .station(fakeStation).goods(goods)
                         .distance(path.distance()).duration(path.duration())
-                        .currentStock(bestMatchedGoods.getStock()).build());
-            } catch (Exception e) {}
+                        .currentStock(goods.getStock()).build());
+            } catch (Exception e) {
+                log.error("L0路线规划失败", e);
+            }
+        }
+
+        if (!candidates.isEmpty()) {
+            log.info("🔥 L0级直达匹配成功！发现 {} 个紧急供应源，将直接指派骑士越过驿站！", candidates.size());
+            return dispatchStrategy.calculateAndRank(candidates, dispatchOrder.getUrgencyLevel());
+        }
+
+        // ==========================================================
+        // 🚚 L1级：平时中转站调度匹配 (Hub-and-Spoke)
+        // ==========================================================
+        log.info("ℹ️ L0级直达无匹配，降级进入 L1 驿站中转寻源...");
+        GeoResults<RedisGeoCommands.GeoLocation<String>> geoResults =
+                stationService.searchNearbyStations(dispatchOrder.getTargetLon().doubleValue(), dispatchOrder.getTargetLat().doubleValue(), 15.0);
+
+        if (geoResults != null && !geoResults.getContent().isEmpty()) {
+            for (var result : geoResults.getContent()) {
+                Long stationId = Long.parseLong(result.getContent().getName());
+
+                List<Goods> stationGoodsList = goodsMapper.selectAvailableGoodsByStation(stationId, targetCategories);
+                Goods bestMatchedGoods = null;
+                double maxTagScore = -1.0;
+
+                for (Goods goods : stationGoodsList) {
+                    double currentTagScore = calculateTagScore(hasTagRequirement, reqTags, goods.getTags());
+                    if (currentTagScore > maxTagScore) {
+                        maxTagScore = currentTagScore;
+                        bestMatchedGoods = goods;
+                    }
+                }
+
+                if (bestMatchedGoods == null) continue;
+                Station station = stationService.getById(stationId);
+                if (station == null) continue;
+
+                String destLonLat = station.getLongitude() + "," + station.getLatitude();
+                try {
+                    AmapDirectionResponse.Path path = amapClientService.getRidingDistance(originLonLat, destLonLat);
+                    candidates.add(DispatchCandidateVO.builder()
+                            .station(station).goods(bestMatchedGoods)
+                            .distance(path.distance()).duration(path.duration())
+                            .currentStock(bestMatchedGoods.getStock()).build());
+                } catch (Exception e) {}
+            }
         }
 
         if (candidates.isEmpty()) return new ArrayList<>();
         return dispatchStrategy.calculateAndRank(candidates, dispatchOrder.getUrgencyLevel());
+    }
+
+    // JSON 标签安全算分引擎
+    private double calculateTagScore(boolean hasReq, List<String> reqTags, String dbTagsJson) {
+        if (!hasReq) return 1.0;
+        if (dbTagsJson == null || dbTagsJson.isEmpty()) return 0.0;
+        String cleanTags = dbTagsJson.replaceAll("[\"\\[\\]\\s]", "");
+        List<String> goodsTags = Arrays.asList(cleanTags.split(","));
+        long matchCount = reqTags.stream().filter(t -> goodsTags.contains(t.trim())).count();
+        if (matchCount == 0) return 0.0;
+        return (double) matchCount / reqTags.size();
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -144,7 +191,7 @@ public class DispatchEngineServiceImpl {
 
         Integer vType = volunteer.getVehicleType() != null ? volunteer.getVehicleType() : 1;
 
-        // 🚨 拦截 1：距离拦截（大于5km，步行/单车禁入）
+        // 🚨 距离拦截
         if (order.getTargetLat() != null && order.getTargetLon() != null
                 && order.getSourceLat() != null && order.getSourceLon() != null) {
             double dist = calculateDistance(order.getSourceLat().doubleValue(), order.getSourceLon().doubleValue(),
@@ -154,15 +201,13 @@ public class DispatchEngineServiceImpl {
             }
         }
 
-        // 🚨🚨 拦截 2：引入 CVRP 累计装载算力 (Capacity Points) 🚨🚨
+        // 🚨 CVRP 累计装载算力预警
         if (order.getGoodsId() != null) {
             Goods newGoods = goodsService.getById(order.getGoodsId());
             if (newGoods != null) {
-                // 1. 定义载具的【最大体积算力池】与【最大承重算力池】
                 int maxVolumePoints = vType == 1 ? 2 : (vType == 2 ? 5 : (vType == 3 ? 15 : 100));
                 int maxWeightPoints = vType == 1 ? 2 : (vType == 2 ? 4 : (vType == 3 ? 10 : 100));
 
-                // 2. 累计骑手目前【正在执行中(taskStatus=1或2)】的订单负荷
                 int currentVolumePoints = 0;
                 int currentWeightPoints = 0;
 
@@ -181,21 +226,18 @@ public class DispatchEngineServiceImpl {
                     }
                 }
 
-                // 3. 加上当前准备抢的这单的负荷
                 int newVolumePoint = newGoods.getVolumeLevel() == 3 ? 40 : (newGoods.getVolumeLevel() == 2 ? 5 : 1);
                 int newWeightPoint = newGoods.getWeightLevel() == 3 ? 20 : (newGoods.getWeightLevel() == 2 ? 5 : 1);
 
-                // 4. 终极爆仓校验
                 if ((currentVolumePoints + newVolumePoint) > maxVolumePoints) {
-                    throw new BusinessException("🚨 爆仓预警：您的载具容量已达极限！无法再顺路接载该体积的物资，请先完成当前配送！");
+                    throw new BusinessException("🚨 爆仓预警：您的载具容量已达极限！请先完成当前配送！");
                 }
                 if ((currentWeightPoints + newWeightPoint) > maxWeightPoints) {
-                    throw new BusinessException("🚨 超载预警：继续顺路接单将超出您的载具安全承重，已强行熔断！");
+                    throw new BusinessException("🚨 超载预警：继续接单将超出您的载具安全承重，已强行熔断！");
                 }
             }
-        }   
+        }
 
-        // --- 以下为正常的抢单扣减逻辑 ---
         boolean isGrabbed = orderService.update(
                 new LambdaUpdateWrapper<DispatchOrder>().eq(DispatchOrder::getOrderId, orderId)
                         .eq(DispatchOrder::getStatus, 0).set(DispatchOrder::getStatus, 1)
@@ -219,9 +261,17 @@ public class DispatchEngineServiceImpl {
     }
 
     public Map<String, Object> triggerEmergencyBroadcast(Long orderId) {
+        // 🛡️ 架构师防线 4：分布式防重放锁 (防止管理员手抖狂点)
+        String lockKey = "LOCK:BROADCAST:" + orderId;
+        Boolean isLocked = stringRedisTemplate.opsForValue().setIfAbsent(lockKey, "1", 30, TimeUnit.SECONDS);
+        if (Boolean.FALSE.equals(isLocked)) {
+            throw new BusinessException("⚠️ 正在向全城发射紧急广播信号，请勿在 30 秒内频繁点击！");
+        }
+
         DispatchOrder order = orderService.getById(orderId);
         if (order == null || order.getTargetLon() == null) throw new BusinessException("坐标缺失");
 
+        // (后续大厂优化点：这里的 userService.list 未来量大时必须换成 ST_Distance 空间索引SQL查询)
         List<User> allMerchants = userService.list(new LambdaQueryWrapper<User>().eq(User::getRole, 2).isNotNull(User::getCurrentLon));
         List<User> list3km = new ArrayList<>(), list10km = new ArrayList<>();
 
@@ -240,6 +290,8 @@ public class DispatchEngineServiceImpl {
         } else if (!list10km.isEmpty()) {
             targetMerchants = list10km; result.put("radius", 10); result.put("isDegraded", true);
         } else {
+            // 失败也需手动释放防抖锁，否则要等 30 秒
+            stringRedisTemplate.delete(lockKey);
             throw new BusinessException("终极熔断：扩大至全城 10 公里均无商铺响应！");
         }
 
