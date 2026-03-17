@@ -75,53 +75,65 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         boolean saved = this.save(goods);
         if (!saved) throw new BusinessException("物资入库失败，请稍后重试");
 
-        // 2. 生成调度大盘工单 fb_order
+        // 2. 处理 P2P 战时响应逻辑 (缝合求助单)
+        boolean isP2P = false;
         if (dto.getTargetOrderId() != null) {
-            // 🚨 核心修复 2：定向直连缝合！复活那个停滞的 SOS 单！
             DispatchOrder targetOrder = dispatchOrderMapper.selectById(dto.getTargetOrderId());
             if (targetOrder != null && targetOrder.getStatus() == 0) {
                 targetOrder.setGoodsId(goods.getGoodsId());
                 targetOrder.setExceptionReason(null); // 抹除死因
                 targetOrder.setStatus((byte) 0); // 保持在待抢单状态
 
-                // 把商铺坐标、具体的南瓜粥名字和数量，统统喂给老人家的需求单
                 User merchant = userMapper.selectById(merchantId);
                 if (merchant != null) {
                     targetOrder.setSourceLon(merchant.getCurrentLon());
                     targetOrder.setSourceLat(merchant.getCurrentLat());
                 }
-                targetOrder.setSourceId(merchantId);
+
+                // 🚨 修复细节：设定为负数的 merchantId，代表这是商家直供，不去驿站拿货
+                targetOrder.setSourceId(-merchantId);
                 targetOrder.setGoodsName(goods.getGoodsName());
                 targetOrder.setGoodsCount(goods.getStock());
 
                 dispatchOrderMapper.updateById(targetOrder);
+                isP2P = true;
+
                 log.info("🚨 战时响应：商家 {} 已接管求救单 {}！物资名更新为 {}，系统转入 P2P 直达模式！",
                         merchantId, targetOrder.getOrderSn(), goods.getGoodsName());
-
-                // 【重中之重】：直接 return，坚决不生成废弃的 DON 单！
-                return;
             }
         }
 
-        // 只有平时态，且没传 TargetOrderId，才会走到这里生成普通的 DON 单
+        // 3. 生成 DON 单（大厂标准的复式记账流水）
         DispatchOrder order = new DispatchOrder();
         order.setOrderSn("DON-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase());
-        order.setOrderType((byte) 1); // 1-供应单(商家->驿站)
+        order.setOrderType((byte) 1); // 1-供应单(商家->驿站/市民)
         order.setGoodsId(goods.getGoodsId());
         order.setRequiredCategory(dto.getCategory());
         order.setGoodsName(dto.getGoodsName());
         order.setGoodsCount(dto.getStock());
         order.setSourceId(merchantId);
-        order.setDestId(dto.getCurrentStationId());
-        order.setDeliveryMethod((byte) 1); // 志愿配送
-        order.setUrgencyLevel((byte) 5);
-        order.setStatus((byte) 0);
 
-        Station station = stationMapper.selectById(dto.getCurrentStationId());
-        if (station != null) {
-            order.setTargetLon(station.getLongitude());
-            order.setTargetLat(station.getLatitude());
+        if (isP2P) {
+            // 🚨 核心修复：如果是定向直供，DON单只作为商家凭证，坚决不进调度池！
+            order.setDestId(null);
+            order.setDeliveryMethod((byte) 1);
+            order.setUrgencyLevel((byte) 5);
+            order.setStatus((byte) 3); // 🚨 状态设为 3 (已完结/已归档)
+            order.setExceptionReason("响应紧急广播：定向直供账单备案");
+        } else {
+            // 平时态：去大仓，需要生成给骑士接单的任务
+            order.setDestId(dto.getCurrentStationId());
+            order.setDeliveryMethod((byte) 1); // 志愿配送
+            order.setUrgencyLevel((byte) 5);
+            order.setStatus((byte) 0); // 状态设为 0 (待骑士接单)
+
+            Station station = stationMapper.selectById(dto.getCurrentStationId());
+            if (station != null) {
+                order.setTargetLon(station.getLongitude());
+                order.setTargetLat(station.getLatitude());
+            }
         }
+
         dispatchOrderMapper.insert(order);
     }
 
