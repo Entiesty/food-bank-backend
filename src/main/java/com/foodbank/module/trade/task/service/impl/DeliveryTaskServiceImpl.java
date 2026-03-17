@@ -26,7 +26,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
-import org.springframework.context.annotation.Lazy; // 🚨 必须引入
+import org.springframework.context.annotation.Lazy;
 
 @Slf4j
 @Service
@@ -43,7 +43,34 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
     private IStationService stationService;
 
     @Autowired
-    private IGoodsService goodsService; // 🚨 注入物资服务
+    private IGoodsService goodsService;
+
+    // 🚨 新增：三段式状态机 - 确认取货节点
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void confirmPickup(Long taskId) {
+        // 1. 查出骑士的执行任务单
+        DeliveryTask task = this.getById(taskId);
+        if (task == null) {
+            throw new BusinessException("护航任务不存在");
+        }
+
+        // 2. 状态机防越级校验
+        if (task.getTaskStatus() != 1) {
+            throw new BusinessException("状态异常：当前任务不处于【待取货】状态");
+        }
+
+        // 3. 扭转底层任务状态为 2 (已取货)
+        task.setTaskStatus((byte) 2);
+        this.updateById(task);
+
+        // 4. 级联微调：更新全局订单表的异常/备注字段，让大屏监控更细腻
+        DispatchOrder order = orderService.getById(task.getOrderId());
+        if (order != null) {
+            order.setExceptionReason("物资已离柜，骑士配送中");
+            orderService.updateById(order);
+        }
+    }
 
     // 🚀 核心核销逻辑：带图片参数、乐观锁防线、平急分流与原生加分
     @Override
@@ -99,10 +126,6 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         int rewardPoints = 10;
         User user = userService.getById(userId);
         if (user != null && user.getRole() != null && user.getRole() == 3) {
-
-            // 🛡️ 架构师防线 3：放弃 MyBatis-Plus updateById，采用原生 SQL 规避 Lost Update
-            // 提示：你需要在 UserMapper 里面写一个原生方法 addCreditScore(Long userId, int points)
-            // 这里为了不让你改 Mapper，我们用 UpdateWrapper 巧妙实现 SQL 级自增：
             userService.update(new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User>()
                     .eq(User::getUserId, userId)
                     .setSql("credit_score = credit_score + " + rewardPoints));
@@ -120,9 +143,16 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
     public Page<MyTaskVO> getMyTasksPage(Long volunteerId, Byte status, int pageNum, int pageSize) {
         LambdaQueryWrapper<DeliveryTask> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(DeliveryTask::getVolunteerId, volunteerId);
+
+        // 🚨 修复状态查询：将 1(待取货) 和 2(已取货) 统一视为“正在护送”
         if (status != null) {
-            queryWrapper.eq(DeliveryTask::getTaskStatus, status);
+            if (status == 1) {
+                queryWrapper.in(DeliveryTask::getTaskStatus, java.util.Arrays.asList(1, 2));
+            } else {
+                queryWrapper.eq(DeliveryTask::getTaskStatus, status);
+            }
         }
+
         queryWrapper.orderByDesc(DeliveryTask::getAcceptTime);
 
         Page<DeliveryTask> taskPage = this.page(new Page<>(pageNum, pageSize), queryWrapper);
@@ -161,7 +191,6 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                         targetLat = station.getLatitude();
                     }
                 } else {
-                    // 🚨 核心修复：兼容战时直供（负数商家ID映射）
                     Long sId = order.getSourceId();
                     if (sId != null && sId < 0) {
                         User merchant = userService.getById(-sId);

@@ -16,4 +16,9 @@ public interface IDeliveryTaskService extends IService<DeliveryTask> {
      * 🚀 确认送达核销（带现场照片归档）
      */
     void completeTask(Long taskId, Long userId, String proofImage);
+
+    /**
+     * 🚀 确认到店取货 (状态扭转: 1 -> 2)
+     */
+    void confirmPickup(Long taskId);
 }

@@ -19,6 +19,14 @@ public class DeliveryTaskController {
     @Autowired
     private IDeliveryTaskService taskService;
 
+    // 🚨 新增：骑士确认取货接口
+    @Operation(summary = "5. 确认取货任务", description = "志愿者到达物理据点后确认提取物资")
+    @PostMapping("/pickup/{taskId}")
+    public Result<String> confirmPickup(@PathVariable Long taskId) {
+        taskService.confirmPickup(taskId);
+        return Result.success("取货确认成功");
+    }
+
     @Operation(summary = "3. 确认送达核销任务", description = "志愿者到达目的地后核销，并上传现场照片")
     @PostMapping("/complete")
     public Result<String> checkOutTask(
@@ -26,7 +34,6 @@ public class DeliveryTaskController {
             @Parameter(description = "核销凭证照片URL") @RequestParam(required = false) String proofImage) {
 
         Long myVolunteerId = UserContext.getUserId();
-        // 🚀 传参透传，完成闭环
         taskService.completeTask(taskId, myVolunteerId, proofImage);
         return Result.success("核销成功！现场照片已归档，信誉分已奖励。");
     }
