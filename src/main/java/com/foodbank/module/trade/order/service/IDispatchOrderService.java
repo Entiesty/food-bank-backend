@@ -8,7 +8,7 @@ import com.foodbank.module.trade.order.model.vo.AvailableOrderVO;
 import java.util.List;
 
 public interface IDispatchOrderService extends IService<DispatchOrder> {
-    void publishDemandOrder(DemandPublishDTO dto);
+    String publishDemandOrder(DemandPublishDTO dto);
     Page<AvailableOrderVO> getAvailableOrderPage(int pageNum, int pageSize);
     void switchOrderToPickup(Long orderId);
     Page<DispatchOrder> getAdminOrderPage(int pageNum, int pageSize, String orderSn, Byte status, Byte deliveryMethod);

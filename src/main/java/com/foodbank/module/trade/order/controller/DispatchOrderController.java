@@ -15,7 +15,10 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Tag(name = "Order Controller", description = "调度订单查询与管理")
 @RestController
@@ -31,15 +34,17 @@ public class DispatchOrderController {
         return Result.success(orderService.getPendingOrdersForMap());
     }
 
-    @Operation(summary = "受赠方发布紧急求助/物资需求")
-    @PostMapping("/publish-demand")
-    public Result<Void> publishDemand(@Validated @RequestBody DemandPublishDTO dto) {
-        Byte role = UserContext.getUserRole();
-        if (role != null && role != 1 && role != 4) {
-            throw new BusinessException(ResultCode.FORBIDDEN, "越权操作：只有受赠方可以发布求助！");
-        }
-        orderService.publishDemandOrder(dto);
-        return Result.success(null, "求助信息已发布，系统正在为您智能匹配物资...");
+    @Operation(summary = "发布物资求助单/自提单")
+    @PostMapping("/publish")
+    public Result<Map<String, String>> publishDemand(@RequestBody DemandPublishDTO dto) {
+        // 调用 Service 获取生成的取件码
+        String code = orderService.publishDemandOrder(dto);
+
+        // 包装成 JSON 对象返回给前端
+        Map<String, String> map = new HashMap<>();
+        map.put("pickupCode", code);
+
+        return Result.success(map);
     }
 
     @Operation(summary = "志愿者抢单大厅列表")

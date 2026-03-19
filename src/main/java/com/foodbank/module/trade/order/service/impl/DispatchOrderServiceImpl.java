@@ -117,9 +117,10 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         return page;
     }
 
+    // 🚨 核心修复：返回值改为 String
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void publishDemandOrder(DemandPublishDTO dto) {
+    public String publishDemandOrder(DemandPublishDTO dto) {
         Long currentUserId = UserContext.getUserId();
         if (currentUserId == null) throw new BusinessException("用户信息获取失败，请重新登录");
 
@@ -128,7 +129,22 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         dispatchOrder.setOrderType((byte) 2);
         dispatchOrder.setDestId(currentUserId);
         dispatchOrder.setRequiredCategory(dto.getRequiredCategory());
-        dispatchOrder.setRequiredTags(dto.getRequiredTags() != null ? String.join(",", dto.getRequiredTags()) : null);
+
+        // 🚨 核心修复：使用 ObjectMapper 将 List<String> 序列化为标准的 JSON 数组格式字符串
+        if (dto.getRequiredTags() != null && !dto.getRequiredTags().isEmpty()) {
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                String jsonTags = mapper.writeValueAsString(dto.getRequiredTags());
+                dispatchOrder.setRequiredTags(jsonTags);
+            } catch (Exception e) {
+                // 如果序列化失败，兜底存入空的 JSON 数组以符合 MySQL 格式校验
+                dispatchOrder.setRequiredTags("[]");
+            }
+        } else {
+            // 如果前端没有传标签，存入空的 JSON 数组
+            dispatchOrder.setRequiredTags("[]");
+        }
+
         dispatchOrder.setUrgencyLevel(dto.getUrgencyLevel() != null ? dto.getUrgencyLevel().byteValue() : 1);
         dispatchOrder.setTargetLon(dto.getTargetLon());
         dispatchOrder.setTargetLat(dto.getTargetLat());
@@ -145,6 +161,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             if (goods.getStock() == 0) goods.setStatus((byte) 3);
             goodsService.updateById(goods);
 
+            // 生成真实的 6 位随机取件码
             String code = String.valueOf((int)((Math.random() * 9 + 1) * 100000));
             dispatchOrder.setPickupCode(code);
             dispatchOrder.setGoodsId(dto.getGoodsId());
@@ -160,6 +177,9 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
 
         boolean saved = this.save(dispatchOrder);
         if (!saved) throw new BusinessException("求助发布失败，请稍后重试");
+
+        // 🚨 核心新增：将生成的真实取件码返回给 Controller
+        return dispatchOrder.getPickupCode();
     }
 
     @Override
@@ -185,6 +205,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             BigDecimal targetLat = order.getTargetLat();
 
             if (order.getOrderType() != null && order.getOrderType() == 1) {
+                // 常规捐赠单 (DON): 商家发往驿站
                 User merchant = userService.getById(order.getSourceId());
                 if (merchant != null) {
                     sourceName = merchant.getUsername() + " (爱心商铺)";
@@ -200,15 +221,27 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     targetLat = station.getLatitude();
                 }
             } else {
-                if (order.getSourceId() < 0) {
-                    User merchant = userService.getById(-order.getSourceId());
+                // 求助单 (SOS): 驿站发往市民，或者 P2P(商家直供市民)
+                boolean isP2P = false;
+                if (order.getGoodsId() != null) {
+                    com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(order.getGoodsId());
+                    // 💡 核心鉴别逻辑：如果物资没有绑定任何驿站，说明它是商家手里刚出炉的 P2P 直供单！
+                    if (goods != null && goods.getCurrentStationId() == null) {
+                        isP2P = true;
+                    }
+                }
+
+                if (isP2P) {
+                    // 🚨 P2P 战时模式：起点变更为商铺
+                    User merchant = userService.getById(order.getSourceId());
                     if (merchant != null) {
-                        sourceName = merchant.getUsername() + " (爱心商铺直发)";
+                        sourceName = merchant.getUsername() + " (🚨定向直供商铺)";
                         sourceAddress = "联系电话: " + merchant.getPhone();
                         sourceLon = merchant.getCurrentLon();
                         sourceLat = merchant.getCurrentLat();
                     }
                 } else {
+                    // 常规模式：起点依然是驿站
                     Station station = stationService.getById(order.getSourceId());
                     if (station != null) {
                         sourceName = station.getStationName();

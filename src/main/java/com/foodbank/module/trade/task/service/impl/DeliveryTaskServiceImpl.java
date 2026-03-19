@@ -175,6 +175,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                 targetLat = order.getTargetLat();
 
                 if (order.getOrderType() != null && order.getOrderType() == 1) {
+                    // 常规捐赠单 (DON): 商家发往驿站
                     User merchant = userService.getById(order.getSourceId());
                     if (merchant != null) {
                         sourceName = merchant.getUsername() + " (爱心商铺)";
@@ -191,22 +192,36 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                         targetLat = station.getLatitude();
                     }
                 } else {
-                    Long sId = order.getSourceId();
-                    if (sId != null && sId < 0) {
-                        User merchant = userService.getById(-sId);
+                    // 求助单 (SOS) 或 包含取送的普通单
+                    boolean isP2P = false;
+                    if (order.getGoodsId() != null) {
+                        com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(order.getGoodsId());
+                        // 💡 核心鉴别：如果物资没有绑定任何驿站，说明它是商家直接响应的 P2P 直供单！
+                        if (goods != null && goods.getCurrentStationId() == null) {
+                            isP2P = true;
+                        }
+                    }
+
+                    if (isP2P) {
+                        // 🚨 战时模式：起点从驿站变更为商铺！
+                        User merchant = userService.getById(order.getSourceId());
                         if (merchant != null) {
-                            sourceName = merchant.getUsername() + " (爱心商铺直发)";
+                            sourceName = merchant.getUsername() + " (🚨定向直供商铺)";
                             sourceAddress = "联系电话: " + merchant.getPhone();
                             sourceLon = merchant.getCurrentLon();
                             sourceLat = merchant.getCurrentLat();
                         }
-                    } else if (sId != null) {
-                        Station station = stationService.getById(sId);
-                        if (station != null) {
-                            sourceName = station.getStationName();
-                            sourceAddress = station.getAddress();
-                            sourceLon = station.getLongitude();
-                            sourceLat = station.getLatitude();
+                    } else {
+                        // 常规模式：起点依然是驿站
+                        Long sId = order.getSourceId();
+                        if (sId != null) {
+                            Station station = stationService.getById(sId);
+                            if (station != null) {
+                                sourceName = station.getStationName();
+                                sourceAddress = station.getAddress();
+                                sourceLon = station.getLongitude();
+                                sourceLat = station.getLatitude();
+                            }
                         }
                     }
 
