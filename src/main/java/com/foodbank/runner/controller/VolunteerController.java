@@ -1,4 +1,4 @@
-package com.foodbank.module.volunteer.controller;
+package com.foodbank.runner.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;

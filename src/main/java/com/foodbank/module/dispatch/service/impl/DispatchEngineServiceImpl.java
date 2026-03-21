@@ -1,8 +1,8 @@
 package com.foodbank.module.dispatch.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.foodbank.common.exception.BusinessException;
+import com.foodbank.config.RabbitMQConfig;
 import com.foodbank.module.trade.order.entity.DispatchOrder;
 import com.foodbank.module.trade.task.entity.DeliveryTask;
 import com.foodbank.module.dispatch.model.dto.AmapDirectionResponse;
@@ -20,12 +20,14 @@ import com.foodbank.module.system.user.service.IUserService;
 import com.foodbank.module.trade.order.mapper.DispatchOrderMapper;
 import com.foodbank.module.resource.goods.mapper.GoodsMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.geo.GeoResults;
 import org.springframework.data.redis.connection.RedisGeoCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -42,7 +44,6 @@ public class DispatchEngineServiceImpl {
     private AmapClientService amapClientService;
     @Autowired
     private MultiFactorDispatchStrategy dispatchStrategy;
-
     @Autowired
     private IDispatchOrderService orderService;
     @Autowired
@@ -51,12 +52,16 @@ public class DispatchEngineServiceImpl {
     private IUserService userService;
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
-
-    // 🚨 注入新增加的自定义 Mapper
     @Autowired
     private DispatchOrderMapper dispatchOrderMapper;
     @Autowired
     private GoodsMapper goodsMapper;
+
+    // 🚨 注入高并发双擎组件
+    @Autowired
+    private RedissonClient redissonClient;
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
 
     public List<DispatchCandidateVO> smartMatchStations(DispatchOrder dispatchOrder) {
         log.info("📡 启动智能派单匹配，坐标:[{},{}], 需求大类:{}, 需求标签:{}",
@@ -176,7 +181,9 @@ public class DispatchEngineServiceImpl {
         return (double) matchCount / reqTags.size();
     }
 
-    @Transactional(rollbackFor = Exception.class)
+    // ==============================================================================
+    // 🚀 终极版高并发抢单：Redis 分布式锁拦截 + 你的 CVRP 算法校验 + RabbitMQ 异步入库
+    // ==============================================================================
     public void grabOrder(Long orderId, Long volunteerId) {
         if (orderId == null || volunteerId == null) throw new BusinessException("订单ID或志愿者ID不能为空");
 
@@ -186,71 +193,90 @@ public class DispatchEngineServiceImpl {
             throw new BusinessException("您的资质尚未通过审核，暂无接单权限！");
         }
 
-        DispatchOrder order = orderService.getById(orderId);
-        if (order == null) throw new BusinessException("该订单不存在");
+        // 1. 构建全局排他锁，防止 1000 个人同时校验引发雪崩
+        String lockKey = "lock:order:grab:" + orderId;
+        RLock lock = redissonClient.getLock(lockKey);
 
-        Integer vType = volunteer.getVehicleType() != null ? volunteer.getVehicleType() : 1;
-
-        // 🚨 距离拦截
-        if (order.getTargetLat() != null && order.getTargetLon() != null
-                && order.getSourceLat() != null && order.getSourceLon() != null) {
-            double dist = calculateDistance(order.getSourceLat().doubleValue(), order.getSourceLon().doubleValue(),
-                    order.getTargetLat().doubleValue(), order.getTargetLon().doubleValue());
-            if (dist > 5.0 && vType <= 2) {
-                throw new BusinessException("🚨 运力不匹配：该单跨区较远(" + String.format("%.1f", dist) + "km)，请移交机动骑士！");
+        try {
+            // 2. 尝试上锁，挡住并发洪峰
+            boolean isLocked = lock.tryLock(2, 10, TimeUnit.SECONDS);
+            if (!isLocked) {
+                throw new BusinessException("当前抢单人数过多或已被他人抢占，请稍后重试！");
             }
-        }
 
-        // 🚨 CVRP 累计装载算力预警
-        if (order.getGoodsId() != null) {
-            Goods newGoods = goodsService.getById(order.getGoodsId());
-            if (newGoods != null) {
-                int maxVolumePoints = vType == 1 ? 2 : (vType == 2 ? 5 : (vType == 3 ? 15 : 100));
-                int maxWeightPoints = vType == 1 ? 2 : (vType == 2 ? 4 : (vType == 3 ? 10 : 100));
+            DispatchOrder order = orderService.getById(orderId);
+            if (order == null || order.getStatus() != 0) {
+                throw new BusinessException("手慢了！该订单已被领取或状态已变更");
+            }
 
-                int currentVolumePoints = 0;
-                int currentWeightPoints = 0;
+            // 3. 🚨 完美保留你的 CVRP 距离与容量校验算法！
+            Integer vType = volunteer.getVehicleType() != null ? volunteer.getVehicleType() : 1;
 
-                List<DeliveryTask> activeTasks = taskService.list(new LambdaQueryWrapper<DeliveryTask>()
-                        .eq(DeliveryTask::getVolunteerId, volunteerId)
-                        .in(DeliveryTask::getTaskStatus, Arrays.asList(1, 2)));
+            // 3.1 跨区距离拦截
+            if (order.getTargetLat() != null && order.getTargetLon() != null
+                    && order.getSourceLat() != null && order.getSourceLon() != null) {
+                double dist = calculateDistance(order.getSourceLat().doubleValue(), order.getSourceLon().doubleValue(),
+                        order.getTargetLat().doubleValue(), order.getTargetLon().doubleValue());
+                if (dist > 5.0 && vType <= 2) {
+                    throw new BusinessException("🚨 运力不匹配：该单跨区较远(" + String.format("%.1f", dist) + "km)，请移交机动骑士！");
+                }
+            }
 
-                for (DeliveryTask t : activeTasks) {
-                    DispatchOrder activeOrder = orderService.getById(t.getOrderId());
-                    if (activeOrder != null && activeOrder.getGoodsId() != null) {
-                        Goods g = goodsService.getById(activeOrder.getGoodsId());
-                        if (g != null) {
-                            currentVolumePoints += (g.getVolumeLevel() == 3 ? 40 : (g.getVolumeLevel() == 2 ? 5 : 1));
-                            currentWeightPoints += (g.getWeightLevel() == 3 ? 20 : (g.getWeightLevel() == 2 ? 5 : 1));
+            // 3.2 累计装载算力预警
+            if (order.getGoodsId() != null) {
+                Goods newGoods = goodsService.getById(order.getGoodsId());
+                if (newGoods != null) {
+                    int maxVolumePoints = vType == 1 ? 2 : (vType == 2 ? 5 : (vType == 3 ? 15 : 100));
+                    int maxWeightPoints = vType == 1 ? 2 : (vType == 2 ? 4 : (vType == 3 ? 10 : 100));
+
+                    int currentVolumePoints = 0;
+                    int currentWeightPoints = 0;
+
+                    List<DeliveryTask> activeTasks = taskService.list(new LambdaQueryWrapper<DeliveryTask>()
+                            .eq(DeliveryTask::getVolunteerId, volunteerId)
+                            .in(DeliveryTask::getTaskStatus, Arrays.asList(1, 2)));
+
+                    for (DeliveryTask t : activeTasks) {
+                        DispatchOrder activeOrder = orderService.getById(t.getOrderId());
+                        if (activeOrder != null && activeOrder.getGoodsId() != null) {
+                            Goods g = goodsService.getById(activeOrder.getGoodsId());
+                            if (g != null) {
+                                currentVolumePoints += (g.getVolumeLevel() == 3 ? 40 : (g.getVolumeLevel() == 2 ? 5 : 1));
+                                currentWeightPoints += (g.getWeightLevel() == 3 ? 20 : (g.getWeightLevel() == 2 ? 5 : 1));
+                            }
                         }
                     }
-                }
 
-                int newVolumePoint = newGoods.getVolumeLevel() == 3 ? 40 : (newGoods.getVolumeLevel() == 2 ? 5 : 1);
-                int newWeightPoint = newGoods.getWeightLevel() == 3 ? 20 : (newGoods.getWeightLevel() == 2 ? 5 : 1);
+                    int newVolumePoint = newGoods.getVolumeLevel() == 3 ? 40 : (newGoods.getVolumeLevel() == 2 ? 5 : 1);
+                    int newWeightPoint = newGoods.getWeightLevel() == 3 ? 20 : (newGoods.getWeightLevel() == 2 ? 5 : 1);
 
-                if ((currentVolumePoints + newVolumePoint) > maxVolumePoints) {
-                    throw new BusinessException("🚨 爆仓预警：您的载具容量已达极限！请先完成当前配送！");
-                }
-                if ((currentWeightPoints + newWeightPoint) > maxWeightPoints) {
-                    throw new BusinessException("🚨 超载预警：继续接单将超出您的载具安全承重，已强行熔断！");
+                    if ((currentVolumePoints + newVolumePoint) > maxVolumePoints) {
+                        throw new BusinessException("🚨 爆仓预警：您的载具容量已达极限！请先完成当前配送！");
+                    }
+                    if ((currentWeightPoints + newWeightPoint) > maxWeightPoints) {
+                        throw new BusinessException("🚨 超载预警：继续接单将超出您的载具安全承重，已强行熔断！");
+                    }
                 }
             }
+
+            // 4. 🚨 校验通过，丢入 MQ 队列实现异步削峰 (不再直接写 MySQL)
+            Map<String, Object> message = new HashMap<>();
+            message.put("orderId", orderId);
+            message.put("volunteerId", volunteerId);
+            message.put("timestamp", System.currentTimeMillis());
+
+            rabbitTemplate.convertAndSend(RabbitMQConfig.EXCHANGE_NAME, RabbitMQConfig.GRAB_ORDER_ROUTING_KEY, message);
+
+            log.info("🚀 骑士 [{}] 成功通过CVRP校验并抢占分布式锁，单号 {} 已送入MQ排队入库", volunteerId, order.getOrderSn());
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException("排队超时，请重试");
+        } finally {
+            if (lock != null && lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
         }
-
-        boolean isGrabbed = orderService.update(
-                new LambdaUpdateWrapper<DispatchOrder>().eq(DispatchOrder::getOrderId, orderId)
-                        .eq(DispatchOrder::getStatus, 0).set(DispatchOrder::getStatus, 1)
-        );
-
-        if (!isGrabbed) throw new BusinessException("晚了一小步，该任务已被领取！");
-
-        DeliveryTask deliveryTask = new DeliveryTask();
-        deliveryTask.setOrderId(orderId);
-        deliveryTask.setVolunteerId(volunteerId);
-        deliveryTask.setTaskStatus((byte) 1);
-        deliveryTask.setVersion(0);
-        taskService.save(deliveryTask);
     }
 
     public void pickUpGoods(Long taskId) {
@@ -271,7 +297,6 @@ public class DispatchEngineServiceImpl {
         DispatchOrder order = orderService.getById(orderId);
         if (order == null || order.getTargetLon() == null) throw new BusinessException("坐标缺失");
 
-        // (后续大厂优化点：这里的 userService.list 未来量大时必须换成 ST_Distance 空间索引SQL查询)
         List<User> allMerchants = userService.list(new LambdaQueryWrapper<User>().eq(User::getRole, 2).isNotNull(User::getCurrentLon));
         List<User> list3km = new ArrayList<>(), list10km = new ArrayList<>();
 
