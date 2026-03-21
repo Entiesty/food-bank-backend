@@ -105,16 +105,34 @@ public class DispatchOrderController {
     @GetMapping("/my-history")
     public Result<Page<DispatchOrder>> getMyHistoryOrders(
             @RequestParam(defaultValue = "1") int pageNum,
-            @RequestParam(defaultValue = "10") int pageSize) {
+            @RequestParam(defaultValue = "10") int pageSize,
+            @RequestParam(required = false) String status) { // 🚨 1. 新增：接收前端传来的 status 字符串
+
         Long userId = UserContext.getUserId();
         Byte role = UserContext.getUserRole();
         if (role != null && role != 1) {
             throw new BusinessException("操作失败：仅受赠方可访问求助档案");
         }
+
         Page<DispatchOrder> pageReq = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<DispatchOrder> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(DispatchOrder::getDestId, userId);
+
+        // 🚨 2. 核心修复：动态解析状态参数并构建 SQL
+        if (status != null && !status.trim().isEmpty()) {
+            // 将前端传来的 "0,1" 等字符串按逗号切分
+            String[] statusArray = status.split(",");
+            java.util.List<Integer> statusList = new java.util.ArrayList<>();
+            for (String s : statusArray) {
+                statusList.add(Integer.parseInt(s.trim()));
+            }
+            // 组装 SQL，例如：WHERE status IN (0, 1)
+            queryWrapper.in(DispatchOrder::getStatus, statusList);
+        }
+
+        // 按创建时间倒序排列
         queryWrapper.orderByDesc(DispatchOrder::getCreateTime);
+
         return Result.success(orderService.page(pageReq, queryWrapper));
     }
 

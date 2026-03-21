@@ -45,7 +45,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
     @Autowired
     private IGoodsService goodsService;
 
-    // 🚨 新增：三段式状态机 - 确认取货节点
+    // 🚨 修复后：三表级联状态同步的确认取货节点 (完美避开类型冲突)
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void confirmPickup(Long taskId) {
@@ -54,21 +54,29 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         if (task == null) {
             throw new BusinessException("护航任务不存在");
         }
-
-        // 2. 状态机防越级校验
         if (task.getTaskStatus() != 1) {
             throw new BusinessException("状态异常：当前任务不处于【待取货】状态");
         }
 
-        // 3. 扭转底层任务状态为 2 (已取货)
+        // [表 1]：扭转底层任务状态为 2 (已取货) -> 只能用 this
         task.setTaskStatus((byte) 2);
         this.updateById(task);
 
-        // 4. 级联微调：更新全局订单表的异常/备注字段，让大屏监控更细腻
+        // [表 2]：扭转全局订单状态为 1 (运送中) -> 必须用 orderService
         DispatchOrder order = orderService.getById(task.getOrderId());
         if (order != null) {
             order.setExceptionReason("物资已离柜，骑士配送中");
+            order.setStatus((byte) 1);
             orderService.updateById(order);
+
+            // [表 3]：扭转物理物资状态为 1 (运送中) -> 必须用 goodsService
+            if (order.getGoodsId() != null) {
+                com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(order.getGoodsId());
+                if (goods != null && goods.getStatus() == 0) {
+                    goods.setStatus((byte) 1);
+                    goodsService.updateById(goods);
+                }
+            }
         }
     }
 

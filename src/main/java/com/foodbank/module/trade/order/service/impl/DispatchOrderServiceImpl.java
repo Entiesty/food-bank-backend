@@ -323,13 +323,17 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         if (order == null || !order.getDestId().equals(userId)) {
             throw new BusinessException("非法操作：订单不存在或您不是该订单的受赠方");
         }
-        if (order.getStatus() != 2) throw new BusinessException("订单当前状态无法确认收货");
+        if (order.getStatus() != 2) {
+            throw new BusinessException("订单当前状态无法确认收货");
+        }
 
+        // 1. 更新订单状态为已完结 (3)，并记录受助方的评价
         order.setStatus((byte) 3);
         order.setRecipientRating(rating);
         order.setRecipientComment(comment);
         this.updateById(order);
 
+        // 2. 为【护航骑士】发放信誉分
         DeliveryTask task = taskService.getOne(new LambdaQueryWrapper<DeliveryTask>()
                 .eq(DeliveryTask::getOrderId, orderId)
                 .eq(DeliveryTask::getTaskStatus, 3)
@@ -348,7 +352,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             if (creditDelta != 0) {
                 User volunteer = userService.getById(volunteerId);
                 if (volunteer != null) {
-                    int oldScore = volunteer.getCreditScore() != null ? volunteer.getCreditScore() : 0;
+                    int oldScore = volunteer.getCreditScore() != null ? volunteer.getCreditScore() : 100;
                     volunteer.setCreditScore(oldScore + creditDelta);
                     userService.updateById(volunteer);
 
@@ -356,9 +360,33 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     creditLog.setUserId(volunteerId);
                     creditLog.setOrderId(orderId);
                     creditLog.setChangeValue(creditDelta);
-                    creditLog.setReason(reason + (comment != null ? " (" + comment + ")" : ""));
+                    creditLog.setReason(reason + (comment != null && !comment.isEmpty() ? " (" + comment + ")" : ""));
                     creditLog.setCreateTime(LocalDateTime.now());
                     creditLogService.save(creditLog);
+                }
+            }
+        }
+
+        // 3. 🚨 核心新增：为幕后的【爱心商家】发放评价奖励分！
+        if (order.getGoodsId() != null) {
+            com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(order.getGoodsId());
+            if (goods != null && goods.getMerchantId() != null) {
+                User merchant = userService.getById(goods.getMerchantId());
+                if (merchant != null && merchant.getRole() == 2) { // 确保是商家角色
+                    int merchantDelta = (rating == 5) ? 3 : (rating == 4 ? 1 : 0); // 5星加3分，4星加1分
+                    if (merchantDelta > 0) {
+                        int oldScore = merchant.getCreditScore() != null ? merchant.getCreditScore() : 100;
+                        merchant.setCreditScore(oldScore + merchantDelta);
+                        userService.updateById(merchant);
+
+                        CreditLog merchantLog = new CreditLog();
+                        merchantLog.setUserId(merchant.getUserId());
+                        merchantLog.setOrderId(orderId);
+                        merchantLog.setChangeValue(merchantDelta);
+                        merchantLog.setReason("受助方确认收货并给予 " + rating + " 星好评");
+                        merchantLog.setCreateTime(LocalDateTime.now());
+                        creditLogService.save(merchantLog);
+                    }
                 }
             }
         }
@@ -382,7 +410,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         if (order.getStatus() == 3) throw new BusinessException("该取件码已被核销过，请勿重复操作！");
         if (order.getStatus() == 0) throw new BusinessException("物资还在准备中，暂不能核销！");
 
-        order.setStatus((byte) 3);
+        order.setStatus((byte) 2);
         this.updateById(order);
 
         int oldScore = verifier.getCreditScore() != null ? verifier.getCreditScore() : 0;
