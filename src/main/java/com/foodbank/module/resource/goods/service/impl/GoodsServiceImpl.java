@@ -43,7 +43,7 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
     private UserMapper userMapper;
 
     @Override
-    @Transactional(rollbackFor = Exception.class) // 建议加上事务控制，保证库存和订单的数据一致性
+    @Transactional(rollbackFor = Exception.class)
     public void donateGoods(DonateDTO dto) {
         Long merchantId = UserContext.getUserId();
         if (merchantId == null) throw new BusinessException("用户信息异常，请重新登录");
@@ -58,18 +58,15 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         goods.setIsEmergencyOnly((byte) 0);
         goods.setGoodsImageUrl(dto.getGoodsImageUrl());
 
-// 🚨 核心修复：将前端传来的 List<String> 标准序列化为 JSON 数组字符串
         if (dto.getTags() != null && !dto.getTags().isEmpty()) {
             try {
                 com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
                 String jsonTags = mapper.writeValueAsString(dto.getTags());
                 goods.setTags(jsonTags);
             } catch (Exception e) {
-                // 如果序列化失败，兜底存入空的 JSON 数组以符合 MySQL 格式校验
                 goods.setTags("[]");
             }
         } else {
-            // 如果商家没有选任何标签，存入空的 JSON 数组
             goods.setTags("[]");
         }
 
@@ -87,14 +84,14 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         boolean saved = this.save(goods);
         if (!saved) throw new BusinessException("物资入库失败，请稍后重试");
 
-        // 2. 🚨 核心逻辑：处理 P2P 战时响应逻辑 (缝合求助单)
+        // 2. 处理 P2P 战时响应逻辑 (缝合求助单)
         boolean isP2P = false;
         if (dto.getTargetOrderId() != null) {
             DispatchOrder targetOrder = dispatchOrderMapper.selectById(dto.getTargetOrderId());
             if (targetOrder != null && targetOrder.getStatus() == 0) {
                 targetOrder.setGoodsId(goods.getGoodsId());
-                targetOrder.setExceptionReason(null); // 抹除之前“库存不足”的异常备注
-                targetOrder.setStatus((byte) 0); // 彻底激活：重回待抢单池！
+                targetOrder.setExceptionReason(null);
+                targetOrder.setStatus((byte) 0);
 
                 User merchant = userMapper.selectById(merchantId);
                 if (merchant != null) {
@@ -102,8 +99,8 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
                     targetOrder.setSourceLat(merchant.getCurrentLat());
                 }
 
-                targetOrder.setSourceId(merchantId); // 赋予取货起点
-                targetOrder.setGoodsName(goods.getGoodsName()); // 更新具体物资名称
+                targetOrder.setSourceId(merchantId);
+                targetOrder.setGoodsName(goods.getGoodsName());
                 targetOrder.setGoodsCount(goods.getStock());
 
                 dispatchOrderMapper.updateById(targetOrder);
@@ -111,16 +108,14 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
 
                 log.info("🚨 战时响应：商家 {} 已接管求救单 {}！系统转入 P2P 直达模式！", merchantId, targetOrder.getOrderSn());
 
-                // 👇👇👇 🚨 新增：P2P绑定成功瞬间，向受助老人定向发射 WebSocket 喜报弹窗！
                 if (merchant != null && targetOrder.getDestId() != null) {
                     try {
-                        String msg = "您的求救信号已被【" + merchant.getUsername() + "】紧急响应！骑士已接单，救援物资即将直达您的位置！";
+                        String msg = "{\"type\":\"NEW_SOS\", \"orderSn\":\"" + targetOrder.getOrderSn() + "\", \"msg\":\"您的求救信号已被紧急响应！物资即将直达您的位置！\"}";
                         WebSocketServer.sendMessageToUser(targetOrder.getDestId(), msg);
                     } catch (Exception e) {
                         log.error("推送紧急响应弹窗失败", e);
                     }
                 }
-                // 👆👆👆 新增结束
             }
         }
 
@@ -135,33 +130,31 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         order.setSourceId(merchantId);
 
         if (isP2P) {
-            // 定向直供：DON单直接归档，坚决不进骑士大厅去干扰视线
             order.setDestId(null);
             order.setDeliveryMethod((byte) 1);
-            order.setUrgencyLevel((byte) 5); // 🚨 P2P 赋予最高优先级
-            order.setStatus((byte) 3); // 3 = 已归档
+            order.setUrgencyLevel((byte) 5);
+            order.setStatus((byte) 3);
             order.setExceptionReason("响应紧急广播：定向直供备案");
         } else {
-            // 平时捐赠态
             order.setDestId(dto.getCurrentStationId());
+
+            // 🚨 修复 1：发布时就动态接收配送方式
+            // 如果前端没传 deliveryMethod 字段，由于你这是 GoodsServiceImpl 的 dto 里面可能没这个字段，所以暂且默认 1
+            // 真实的自送流转我们在下面的 startSelfDelivery 里做状态跳转
             order.setDeliveryMethod((byte) 1);
             order.setStatus((byte) 0);
 
-            // 智能紧急度赋分引擎
-            byte calculatedUrgency = 1; // 默认作为最低优先级的顺路运单
+            byte calculatedUrgency = 1;
             String cat = dto.getCategory();
 
-            // 基础分：生鲜、热食、乳制品容易坏，基础紧急度提高到 3
             if (cat != null && (cat.contains("生鲜") || cat.contains("速食品") || cat.contains("乳制品") || cat.contains("烘焙糕点"))) {
                 calculatedUrgency = 3;
             }
 
-            // 临期截断分：计算过期倒计时
             java.time.LocalDateTime now = java.time.LocalDateTime.now();
             java.time.LocalDateTime expireTime = dto.getExpirationDate();
             if (expireTime != null && expireTime.isAfter(now)) {
                 long hoursUntilExpire = java.time.Duration.between(now, expireTime).toHours();
-                // 如果距离过期不足 3 小时，不论是什么物资，直接触发“临期抢救机制”，紧急度飙升到 5！
                 if (hoursUntilExpire <= 3) {
                     calculatedUrgency = 5;
                 }
@@ -177,6 +170,12 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
             }
         }
         dispatchOrderMapper.insert(order);
+
+        // 触发大屏 WebSocket 通知
+        try {
+            String jsonMsg = String.format("{\"type\":\"NEW_REQ\", \"orderSn\":\"%s\"}", order.getOrderSn());
+            WebSocketServer.broadcast(jsonMsg);
+        } catch (Exception e) {}
     }
 
     @Override
@@ -219,22 +218,51 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         this.removeById(goodsId);
     }
 
+    // =========================================================================
+    // 🚨 核心修复 2：开启商家自送时，同步跃迁订单状态与履约模式！
+    // =========================================================================
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void startSelfDelivery(Long goodsId, Long merchantId) {
         Goods goods = this.getById(goodsId);
         if (goods == null || !goods.getMerchantId().equals(merchantId)) throw new BusinessException("物资不存在或无权操作");
         if (goods.getStatus() != 0) throw new BusinessException("该物资已被调度引擎接管或在流转中，无法开启自送！");
+
+        // 1. 改变物资表状态
         goods.setStatus((byte) 4);
         this.updateById(goods);
+
+        // 2. 同步改变订单表状态，并把履约模式改为“自提/自送(2)”
+        LambdaUpdateWrapper<DispatchOrder> orderUpdate = new LambdaUpdateWrapper<>();
+        orderUpdate.eq(DispatchOrder::getGoodsId, goodsId)
+                .eq(DispatchOrder::getOrderType, (byte) 1) // 定位到这批物资对应的 DON 捐赠单
+                .set(DispatchOrder::getDeliveryMethod, (byte) 2) // 2代表商家亲自护送
+                .set(DispatchOrder::getStatus, (byte) 4); // 大屏上显示：🟣 商家自送中
+
+        dispatchOrderMapper.update(null, orderUpdate);
     }
 
+    // =========================================================================
+    // 🚨 核心修复 3：完成商家自送时，同步让订单完美闭环入库！
+    // =========================================================================
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void finishSelfDelivery(Long goodsId, Long merchantId) {
         Goods goods = this.getById(goodsId);
         if (goods == null || !goods.getMerchantId().equals(merchantId)) throw new BusinessException("物资不存在或无权操作");
         if (goods.getStatus() != 4) throw new BusinessException("操作失败，该物资当前未处于自送状态！");
+
+        // 1. 改变物资表状态为已入库
         goods.setStatus((byte) 2);
         this.updateById(goods);
+
+        // 2. 同步改变订单表状态为已完结/已入库
+        LambdaUpdateWrapper<DispatchOrder> orderUpdate = new LambdaUpdateWrapper<>();
+        orderUpdate.eq(DispatchOrder::getGoodsId, goodsId)
+                .eq(DispatchOrder::getOrderType, (byte) 1)
+                .set(DispatchOrder::getStatus, (byte) 2); // 大屏上显示：🟢 已抵达入库
+
+        dispatchOrderMapper.update(null, orderUpdate);
     }
 
     @Override

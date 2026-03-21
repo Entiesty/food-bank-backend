@@ -426,8 +426,9 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         Long verifierId = UserContext.getUserId();
         User verifier = userService.getById(verifierId);
 
-        if (verifier.getRole() == null || (verifier.getRole() != 2 && verifier.getRole() != 4)) {
-            throw new BusinessException("权限不足：仅系统管理员(网格员)或商家可执行线下核销！");
+        // 🚨 1. 核心修改：权限极度收敛，踢掉商家(Role 2)，只认管理员(Role 4)
+        if (verifier.getRole() == null || verifier.getRole() != 4) {
+            throw new BusinessException("非法越权访问：仅食物银行驿站管理员可执行线下核销！");
         }
 
         DispatchOrder order = this.getOne(new LambdaQueryWrapper<DispatchOrder>()
@@ -449,7 +450,8 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         creditLog.setUserId(verifierId);
         creditLog.setOrderId(order.getOrderId());
         creditLog.setChangeValue(2);
-        creditLog.setReason("协助处理线下扫码自提业务");
+        // 🚨 2. 核心修改：文案改为管理员专属文案即可
+        creditLog.setReason("驿站管理员协助市民完成线下核销提货");
         creditLog.setCreateTime(LocalDateTime.now());
         creditLogService.save(creditLog);
     }
