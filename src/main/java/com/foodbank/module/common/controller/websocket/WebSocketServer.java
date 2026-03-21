@@ -46,4 +46,17 @@ public class WebSocketServer {
             log.warn("⚠️ 用户 [{}] 当前不在线，弹窗信号未能送达", userId);
         }
     }
+
+    // 🚀 核心大招2：全网广播（通知指挥中心大屏）
+    public static void broadcast(String message) {
+        for (Session session : sessionMap.values()) {
+            if (session != null && session.isOpen()) {
+                try {
+                    session.getBasicRemote().sendText(message);
+                } catch (Exception e) {
+                    log.error("全网广播消息失败", e);
+                }
+            }
+        }
+    }
 }

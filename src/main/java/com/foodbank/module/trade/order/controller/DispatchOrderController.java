@@ -178,4 +178,9 @@ public class DispatchOrderController {
         orderService.verifyPickupCode(pickupCode);
         return Result.success("核销成功！物资已在线下交接完毕。");
     }
+
+    @GetMapping("/distribution/{goodsId}")
+    public Result<List<Map<String, Object>>> getGoodsDistribution(@PathVariable Long goodsId) {
+        return Result.success(orderService.getGoodsDistributionDetails(goodsId));
+    }
 }

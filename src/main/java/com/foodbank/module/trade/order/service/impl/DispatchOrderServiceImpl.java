@@ -117,7 +117,6 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         return page;
     }
 
-    // 🚨 核心修复：返回值改为 String
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String publishDemandOrder(DemandPublishDTO dto) {
@@ -125,34 +124,39 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         if (currentUserId == null) throw new BusinessException("用户信息获取失败，请重新登录");
 
         DispatchOrder dispatchOrder = new DispatchOrder();
-        dispatchOrder.setOrderSn("SOS-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase());
+
+        // 🚨 核心重构：根据紧急度动态分配三轨制业务前缀
+        // 紧急度 >= 6 判定为紧急呼救 (SOS)，低于 6 判定为日常申领 (REQ)
+        String prefix = "REQ-";
+        if (dto.getUrgencyLevel() != null && dto.getUrgencyLevel() >= 6) {
+            prefix = "SOS-";
+        }
+
+        // 动态拼接单号
+        dispatchOrder.setOrderSn(prefix + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase());
+
         dispatchOrder.setOrderType((byte) 2);
         dispatchOrder.setDestId(currentUserId);
         dispatchOrder.setRequiredCategory(dto.getRequiredCategory());
 
-        // 🚨 核心修复：使用 ObjectMapper 将 List<String> 序列化为标准的 JSON 数组格式字符串
         if (dto.getRequiredTags() != null && !dto.getRequiredTags().isEmpty()) {
             try {
                 com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
                 String jsonTags = mapper.writeValueAsString(dto.getRequiredTags());
                 dispatchOrder.setRequiredTags(jsonTags);
             } catch (Exception e) {
-                // 如果序列化失败，兜底存入空的 JSON 数组以符合 MySQL 格式校验
                 dispatchOrder.setRequiredTags("[]");
             }
         } else {
-            // 如果前端没有传标签，存入空的 JSON 数组
             dispatchOrder.setRequiredTags("[]");
         }
 
         dispatchOrder.setUrgencyLevel(dto.getUrgencyLevel() != null ? dto.getUrgencyLevel().byteValue() : 1);
         dispatchOrder.setTargetLon(dto.getTargetLon());
         dispatchOrder.setTargetLat(dto.getTargetLat());
-
         dispatchOrder.setDeliveryMethod(dto.getDeliveryMethod() != null ? dto.getDeliveryMethod().byteValue() : (byte) 1);
 
         if (dispatchOrder.getDeliveryMethod() == 2 && dto.getGoodsId() != null) {
-            // 【原子库存预扣】
             com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(dto.getGoodsId());
             if (goods == null || goods.getStock() < 1) {
                 throw new BusinessException("手慢了！该物资已被其他街坊抢空了！");
@@ -161,12 +165,11 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             if (goods.getStock() == 0) goods.setStatus((byte) 3);
             goodsService.updateById(goods);
 
-            // 生成真实的 6 位随机取件码
             String code = String.valueOf((int)((Math.random() * 9 + 1) * 100000));
             dispatchOrder.setPickupCode(code);
             dispatchOrder.setGoodsId(dto.getGoodsId());
             dispatchOrder.setSourceId(dto.getSourceId());
-            dispatchOrder.setStatus((byte) 1); // 越过0，直接待取货
+            dispatchOrder.setStatus((byte) 1);
         } else {
             dispatchOrder.setStatus((byte) 0);
         }
@@ -178,7 +181,14 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         boolean saved = this.save(dispatchOrder);
         if (!saved) throw new BusinessException("求助发布失败，请稍后重试");
 
-        // 🚨 核心新增：将生成的真实取件码返回给 Controller
+        try {
+            String msgType = dispatchOrder.getOrderSn().startsWith("SOS") ? "NEW_SOS" : "NEW_REQ";
+            String jsonMsg = String.format("{\"type\":\"%s\", \"orderSn\":\"%s\"}", msgType, dispatchOrder.getOrderSn());
+            com.foodbank.module.common.controller.websocket.WebSocketServer.broadcast(jsonMsg);
+        } catch (Exception e) {
+            log.error("WebSocket 订单通知广播失败", e);
+        }
+
         return dispatchOrder.getPickupCode();
     }
 
@@ -301,7 +311,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         if (order == null) throw new BusinessException("订单不存在");
         if (order.getStatus() >= 2) throw new BusinessException("志愿者已送达或订单已完成，无法撤销");
 
-        order.setStatus((byte) 3);
+        order.setStatus((byte) 4);
         boolean updated = this.updateById(order);
         if (!updated) throw new BusinessException("撤销失败，请重试");
 
@@ -319,21 +329,29 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void confirmReceiptAndRate(Long orderId, Long userId, Integer rating, String comment) {
+        // 1. 基础校验 (只读查询)
         DispatchOrder order = this.getById(orderId);
         if (order == null || !order.getDestId().equals(userId)) {
             throw new BusinessException("非法操作：订单不存在或您不是该订单的受赠方");
         }
-        if (order.getStatus() != 2) {
-            throw new BusinessException("订单当前状态无法确认收货");
+
+        // ==========================================
+        // 🚀 行级乐观锁状态跃迁 (防并发刷单)
+        // ==========================================
+        boolean updated = this.update(new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<DispatchOrder>()
+                .eq(DispatchOrder::getOrderId, orderId)
+                .eq(DispatchOrder::getStatus, 2) // 核心锁：只有当前数据库里真实状态是 2 才能更新成功！
+                .set(DispatchOrder::getStatus, 3)
+                .set(DispatchOrder::getRecipientRating, rating)
+                .set(DispatchOrder::getRecipientComment, comment));
+
+        if (!updated) {
+            throw new BusinessException("该订单状态已改变或您已评价过，请勿重复提交！");
         }
 
-        // 1. 更新订单状态为已完结 (3)，并记录受助方的评价
-        order.setStatus((byte) 3);
-        order.setRecipientRating(rating);
-        order.setRecipientComment(comment);
-        this.updateById(order);
-
-        // 2. 为【护航骑士】发放信誉分
+        // ==========================================
+        // 🚀 核心逻辑二：为【护航骑士】发放信誉分 (打通 0 分静默限制)
+        // ==========================================
         DeliveryTask task = taskService.getOne(new LambdaQueryWrapper<DeliveryTask>()
                 .eq(DeliveryTask::getOrderId, orderId)
                 .eq(DeliveryTask::getTaskStatus, 3)
@@ -342,51 +360,61 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         if (task != null) {
             Long volunteerId = task.getVolunteerId();
             int creditDelta = 0;
-            String reason = "订单完结评价: " + rating + "星";
 
+            // 分数映射规则
             if (rating == 5) creditDelta = 5;
             else if (rating == 4) creditDelta = 2;
             else if (rating == 2) creditDelta = -5;
             else if (rating == 1) creditDelta = -15;
 
-            if (creditDelta != 0) {
-                User volunteer = userService.getById(volunteerId);
-                if (volunteer != null) {
-                    int oldScore = volunteer.getCreditScore() != null ? volunteer.getCreditScore() : 100;
-                    volunteer.setCreditScore(oldScore + creditDelta);
-                    userService.updateById(volunteer);
+            // 🚨 核心修复：无论 creditDelta 是不是 0，都必须写日志记录留存案底
+            User volunteer = userService.getById(volunteerId);
+            if (volunteer != null) {
+                int oldScore = volunteer.getCreditScore() != null ? volunteer.getCreditScore() : 100;
+                volunteer.setCreditScore(oldScore + creditDelta);
+                userService.updateById(volunteer);
 
-                    CreditLog creditLog = new CreditLog();
-                    creditLog.setUserId(volunteerId);
-                    creditLog.setOrderId(orderId);
-                    creditLog.setChangeValue(creditDelta);
-                    creditLog.setReason(reason + (comment != null && !comment.isEmpty() ? " (" + comment + ")" : ""));
-                    creditLog.setCreateTime(LocalDateTime.now());
-                    creditLogService.save(creditLog);
+                CreditLog creditLog = new CreditLog();
+                creditLog.setUserId(volunteerId);
+                creditLog.setOrderId(orderId);
+                creditLog.setChangeValue(creditDelta);
+
+                String vReason = "订单完结评价: " + rating + "星";
+                if (creditDelta == 0) {
+                    vReason += " (无积分变动)";
                 }
+                creditLog.setReason(vReason + (comment != null && !comment.isEmpty() ? " (" + comment + ")" : ""));
+                creditLogService.save(creditLog);
             }
         }
 
-        // 3. 🚨 核心新增：为幕后的【爱心商家】发放评价奖励分！
+        // ==========================================
+        // 🚀 核心逻辑三：溯源双向反哺，给幕后【爱心商家】加分 (打通 0 分静默限制)
+        // ==========================================
         if (order.getGoodsId() != null) {
             com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(order.getGoodsId());
             if (goods != null && goods.getMerchantId() != null) {
                 User merchant = userService.getById(goods.getMerchantId());
-                if (merchant != null && merchant.getRole() == 2) { // 确保是商家角色
-                    int merchantDelta = (rating == 5) ? 3 : (rating == 4 ? 1 : 0); // 5星加3分，4星加1分
-                    if (merchantDelta > 0) {
-                        int oldScore = merchant.getCreditScore() != null ? merchant.getCreditScore() : 100;
-                        merchant.setCreditScore(oldScore + merchantDelta);
-                        userService.updateById(merchant);
+                if (merchant != null && merchant.getRole() == 2) {
+                    int merchantDelta = (rating == 5) ? 3 : (rating == 4 ? 1 : 0);
 
-                        CreditLog merchantLog = new CreditLog();
-                        merchantLog.setUserId(merchant.getUserId());
-                        merchantLog.setOrderId(orderId);
-                        merchantLog.setChangeValue(merchantDelta);
-                        merchantLog.setReason("受助方确认收货并给予 " + rating + " 星好评");
-                        merchantLog.setCreateTime(LocalDateTime.now());
-                        creditLogService.save(merchantLog);
+                    // 🚨 核心修复：无论 merchantDelta 是否大于 0，都强制写入流水追踪表
+                    int oldScore = merchant.getCreditScore() != null ? merchant.getCreditScore() : 100;
+                    merchant.setCreditScore(oldScore + merchantDelta);
+                    userService.updateById(merchant);
+
+                    CreditLog merchantLog = new CreditLog();
+                    merchantLog.setUserId(merchant.getUserId());
+                    merchantLog.setOrderId(orderId);
+                    merchantLog.setChangeValue(merchantDelta);
+
+                    // 动态生成直观的账单解释说明
+                    String mReason = "受助方确认收货并给予 " + rating + " 星评价";
+                    if (merchantDelta == 0) {
+                        mReason += " (未达到奖励标准，无积分加成)";
                     }
+                    merchantLog.setReason(mReason);
+                    creditLogService.save(merchantLog);
                 }
             }
         }
@@ -424,5 +452,47 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         creditLog.setReason("协助处理线下扫码自提业务");
         creditLog.setCreateTime(LocalDateTime.now());
         creditLogService.save(creditLog);
+    }
+
+    @Override
+    public List<java.util.Map<String, Object>> getGoodsDistributionDetails(Long goodsId) {
+        // 🛡️ 防线一：SQL 层拦截，剔除捐赠入库单 (order_type = 1 的 DON 单)
+        List<DispatchOrder> orders = this.list(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<DispatchOrder>()
+                .eq(DispatchOrder::getGoodsId, goodsId)
+                .ne(DispatchOrder::getOrderType, (byte) 1) // 🚨 核心修改：不等于 1 (即只要 SOS 和 自提申领单)
+                .ge(DispatchOrder::getStatus, (byte) 2)
+                .orderByDesc(DispatchOrder::getCreateTime));
+
+        List<java.util.Map<String, Object>> result = new java.util.ArrayList<>();
+        for (DispatchOrder order : orders) {
+            if (order.getDestId() != null) {
+                User recipient = userService.getById(order.getDestId());
+
+                // 🛡️ 防线二：业务层拦截，必须是真正的受助方 (Role = 1)
+                if (recipient != null && recipient.getRole() == 1) {
+                    java.util.Map<String, Object> map = new java.util.HashMap<>();
+                    map.put("orderId", order.getOrderId());
+                    map.put("goodsCount", order.getGoodsCount());
+                    map.put("status", order.getStatus());
+                    map.put("rating", order.getRecipientRating());
+                    map.put("comment", order.getRecipientComment());
+                    map.put("createTime", order.getCreateTime());
+
+                    String rawName = recipient.getUsername();
+                    String maskedName = rawName.length() > 1 ? rawName.charAt(0) + "**" : "**";
+                    map.put("recipientName", maskedName);
+
+                    String tag = recipient.getUserTag();
+                    String tagText = "普通求助市民";
+                    if ("ELDERLY".equals(tag)) tagText = "需照顾老人";
+                    else if ("DISABLED".equals(tag)) tagText = "残障人士";
+                    else if ("SAN_WORKER".equals(tag)) tagText = "环卫工人";
+                    map.put("recipientTag", tagText);
+
+                    result.add(map);
+                }
+            }
+        }
+        return result;
     }
 }

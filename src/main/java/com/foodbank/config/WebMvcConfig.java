@@ -19,6 +19,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .excludePathPatterns(
                         // --- 认证模块 ---
                         "/auth/**",
+                        "/ws/**",
+                        "/api/ws/**",
 
                         // --- 文件模块 ---
                         "/common/file/**",

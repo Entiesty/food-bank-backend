@@ -45,7 +45,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
     @Autowired
     private IGoodsService goodsService;
 
-    // 🚨 修复后：三表级联状态同步的确认取货节点 (完美避开类型冲突)
+    // 🚨 修复后：三表级联状态同步的确认取货节点 (清除了 exceptionReason 污染)
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void confirmPickup(Long taskId) {
@@ -65,7 +65,8 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         // [表 2]：扭转全局订单状态为 1 (运送中) -> 必须用 orderService
         DispatchOrder order = orderService.getById(task.getOrderId());
         if (order != null) {
-            order.setExceptionReason("物资已离柜，骑士配送中");
+            // 🚨 核心修复：删除了 setExceptionReason("物资已离柜...") 这一行！
+            // 正常的物流轨迹应该记在物流表，绝不能占用异常字段！
             order.setStatus((byte) 1);
             orderService.updateById(order);
 
@@ -128,6 +129,15 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
 
         // 4. 为志愿者发放信誉分
         rewardVolunteerCredit(userId, deliveryTask.getOrderId());
+
+        if (dispatchOrder != null && dispatchOrder.getDestId() != null) {
+            try {
+                String jsonMsg = "{\"type\":\"DELIVERED\", \"orderSn\":\"" + dispatchOrder.getOrderSn() + "\"}";
+                com.foodbank.module.common.controller.websocket.WebSocketServer.sendMessageToUser(dispatchOrder.getDestId(), jsonMsg);
+            } catch (Exception e) {
+                log.error("WebSocket 送达通知发送失败", e);
+            }
+        }
     }
 
     private void rewardVolunteerCredit(Long userId, Long orderId) {

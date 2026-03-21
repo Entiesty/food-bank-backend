@@ -18,4 +18,7 @@ public interface IDispatchOrderService extends IService<DispatchOrder> {
 
     // 🚀 万能自提验码核销（管理员/商家可用）
     void verifyPickupCode(String pickupCode);
+
+    // 获取某批次捐赠物资的详细领取记录
+    List<java.util.Map<String, Object>> getGoodsDistributionDetails(Long goodsId);
 }
