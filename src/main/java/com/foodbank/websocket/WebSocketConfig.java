@@ -1,4 +1,4 @@
-package com.foodbank.module.common.controller.websocket;
+package com.foodbank.websocket;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;

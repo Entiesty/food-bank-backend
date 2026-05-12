@@ -1,4 +1,4 @@
-package com.foodbank.module.common.controller;
+package com.foodbank.module.system.file.controller;
 
 import com.foodbank.common.api.Result;
 import com.foodbank.common.exception.BusinessException;

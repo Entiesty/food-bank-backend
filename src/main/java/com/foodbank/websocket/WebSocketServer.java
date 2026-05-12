@@ -1,4 +1,4 @@
-package com.foodbank.module.common.controller.websocket;
+package com.foodbank.websocket;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

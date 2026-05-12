@@ -1,4 +1,4 @@
-package com.foodbank.module.trade.task.consumer;
+package com.foodbank.module.trade.task.mq;
 
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.foodbank.config.RabbitMQConfig;
@@ -6,6 +6,7 @@ import com.foodbank.module.trade.order.entity.DispatchOrder;
 import com.foodbank.module.trade.order.service.IDispatchOrderService;
 import com.foodbank.module.trade.task.entity.DeliveryTask;
 import com.foodbank.module.trade.task.service.IDeliveryTaskService;
+import com.foodbank.websocket.WebSocketServer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,7 +60,7 @@ public class OrderTaskConsumer {
             if (order != null) {
                 try {
                     String wsMsg = String.format("{\"type\":\"ORDER_TAKEN\", \"orderSn\":\"%s\"}", order.getOrderSn());
-                    com.foodbank.module.common.controller.websocket.WebSocketServer.broadcast(wsMsg);
+                    WebSocketServer.broadcast(wsMsg);
                 } catch (Exception ignore) {}
             }
 

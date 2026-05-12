@@ -17,6 +17,7 @@ import com.foodbank.module.trade.task.model.vo.MyTaskVO;
 import com.foodbank.module.trade.task.service.IDeliveryTaskService;
 import com.foodbank.module.system.user.entity.User;
 import com.foodbank.module.system.user.service.IUserService;
+import com.foodbank.websocket.WebSocketServer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -133,7 +134,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         if (dispatchOrder != null && dispatchOrder.getDestId() != null) {
             try {
                 String jsonMsg = "{\"type\":\"DELIVERED\", \"orderSn\":\"" + dispatchOrder.getOrderSn() + "\"}";
-                com.foodbank.module.common.controller.websocket.WebSocketServer.sendMessageToUser(dispatchOrder.getDestId(), jsonMsg);
+                WebSocketServer.sendMessageToUser(dispatchOrder.getDestId(), jsonMsg);
             } catch (Exception e) {
                 log.error("WebSocket 送达通知发送失败", e);
             }

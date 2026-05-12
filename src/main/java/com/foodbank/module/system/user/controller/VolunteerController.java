@@ -1,4 +1,4 @@
-package com.foodbank.runner.controller;
+package com.foodbank.module.system.user.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;

@@ -19,6 +19,7 @@ import com.foodbank.module.trade.order.model.vo.AvailableOrderVO;
 import com.foodbank.module.trade.order.service.IDispatchOrderService;
 import com.foodbank.module.trade.task.entity.DeliveryTask;
 import com.foodbank.module.trade.task.service.IDeliveryTaskService;
+import com.foodbank.websocket.WebSocketServer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -184,7 +185,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         try {
             String msgType = dispatchOrder.getOrderSn().startsWith("SOS") ? "NEW_SOS" : "NEW_REQ";
             String jsonMsg = String.format("{\"type\":\"%s\", \"orderSn\":\"%s\"}", msgType, dispatchOrder.getOrderSn());
-            com.foodbank.module.common.controller.websocket.WebSocketServer.broadcast(jsonMsg);
+            WebSocketServer.broadcast(jsonMsg);
         } catch (Exception e) {
             log.error("WebSocket 订单通知广播失败", e);
         }

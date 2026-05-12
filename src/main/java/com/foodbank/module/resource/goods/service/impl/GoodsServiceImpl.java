@@ -6,7 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.foodbank.common.exception.BusinessException;
 import com.foodbank.common.utils.UserContext;
-import com.foodbank.module.common.controller.websocket.WebSocketServer;
+import com.foodbank.websocket.WebSocketServer;
 import com.foodbank.module.resource.goods.entity.Goods;
 import com.foodbank.module.resource.goods.mapper.GoodsMapper;
 import com.foodbank.module.resource.goods.model.dto.DonateDTO;
