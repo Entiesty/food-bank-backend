@@ -60,7 +60,4 @@ public class DonateDTO {
 
     @Schema(description = "计量单位")
     private String unit;
-
-    @Schema(description = "是否仅限应急模式流通")
-    private Boolean isEmergencyOnly;
 }

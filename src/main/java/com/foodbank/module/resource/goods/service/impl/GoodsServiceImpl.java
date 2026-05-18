@@ -58,7 +58,7 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         goods.setCategory(dto.getCategory());
         goods.setStock(dto.getStock());
         goods.setExpirationDate(dto.getExpirationDate());
-        goods.setIsEmergencyOnly(dto.getIsEmergencyOnly() != null && dto.getIsEmergencyOnly() ? (byte) 1 : (byte) 0);
+        goods.setIsEmergencyOnly(autoTagEmergency(dto.getCategory()));
         goods.setGoodsImageUrl(dto.getGoodsImageUrl());
         goods.setEstimatedValue(dto.getEstimatedValue() != null ? dto.getEstimatedValue() : java.math.BigDecimal.ZERO);
         goods.setUnit(dto.getUnit() != null ? dto.getUnit() : "件");
@@ -330,5 +330,19 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
 
         userMapper.updateById(merchant);
         log.info("🏅 商家CSR更新: 商家[{}] 累计捐赠{}件, CSR等级: {}", merchantId, totalDonations, csrLevel);
+    }
+
+    /**
+     * 按类目自动判定战备物资 — 商家无需手动勾选
+     */
+    private byte autoTagEmergency(String category) {
+        if (category == null) return 0;
+        // 应急物资 + 医疗健康 → 自动战备
+        if (category.startsWith("应急") || category.equals("常备药品")
+                || category.equals("外用急救") || category.equals("医疗器械")
+                || category.equals("营养补品")) {
+            return 1;
+        }
+        return 0;
     }
 }

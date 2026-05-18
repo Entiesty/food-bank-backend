@@ -9,7 +9,8 @@ spring:
 
   devtools:
     restart:
-      enabled: false
+      enabled: true
+      exclude: "static/**,public/**,templates/**"
 
   # JDK 21 虚拟线程：提升调度系统并发性能
   threads:
