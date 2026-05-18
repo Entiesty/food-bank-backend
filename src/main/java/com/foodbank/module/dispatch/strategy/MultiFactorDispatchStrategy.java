@@ -33,8 +33,8 @@ public class MultiFactorDispatchStrategy {
         Config activeConfig = configService.getCurrentConfig();
         double wDist = activeConfig.getWDist().doubleValue();
         double wUrgency = activeConfig.getWUrgency().doubleValue();
-        double wStock = 0.10;
-        double wExpiration = 0.10;
+        double wStock = activeConfig.getWStock() != null ? activeConfig.getWStock().doubleValue() : 0.10;
+        double wExpiration = activeConfig.getWExpiration() != null ? activeConfig.getWExpiration().doubleValue() : 0.10;
 
         long maxDistance = candidates.stream().mapToLong(DispatchCandidateVO::getDistance).max().orElse(1L);
         long minDistance = candidates.stream().mapToLong(DispatchCandidateVO::getDistance).min().orElse(0L);
@@ -88,7 +88,7 @@ public class MultiFactorDispatchStrategy {
         double wDist = activeConfig.getWDist().doubleValue();
         double wUrgency = activeConfig.getWUrgency().doubleValue();
         double wCredit = activeConfig.getWCredit().doubleValue();
-        double wTimeCoin = 0.05;
+        double wTimeCoin = activeConfig.getWTimeCoin() != null ? activeConfig.getWTimeCoin().doubleValue() : 0.05;
 
         // 1. 计算接驾距离并寻找极值用于归一化
         double maxDist = 1.0;

@@ -28,4 +28,13 @@ public class ConfigUpdateDTO {
     @NotNull(message = "标签权重不能为空")
     @JsonProperty("wTag")
     private BigDecimal wTag;
+
+    @JsonProperty("wExpiration")
+    private BigDecimal wExpiration;
+
+    @JsonProperty("wStock")
+    private BigDecimal wStock;
+
+    @JsonProperty("wTimeCoin")
+    private BigDecimal wTimeCoin;
 }

@@ -36,6 +36,7 @@ public class AuthController {
     private StringRedisTemplate stringRedisTemplate;
 
     private static final String SMS_CODE_PREFIX = "sms:code:";
+    private static final String PWD_SALT = "foodbank2026";
 
     @Operation(summary = "0. 获取短信验证码", description = "生成验证码存入Redis并返回给前端模拟手机弹窗")
     @GetMapping("/send-code")
@@ -91,7 +92,7 @@ public class AuthController {
         User user = new User();
         user.setPhone(dto.getPhone());
         user.setUsername(dto.getUsername());
-        user.setPassword(DigestUtils.md5DigestAsHex(dto.getPassword().getBytes()));
+        user.setPassword(DigestUtils.md5DigestAsHex((dto.getPassword() + PWD_SALT).getBytes()));
         user.setRole(reqRole);
         user.setCreditScore(100);
         user.setUserTag("NORMAL");
@@ -103,7 +104,7 @@ public class AuthController {
         // 👆👆👆
 
         user.setIdentityProofUrl(dto.getIdentityProofUrl());
-        user.setIsVerified((byte) 0); // 默认都是未核验
+        user.setIsVerified((byte) 1); // V6: 所有角色注册即通过，不再需要手动审核
 
         user.setCreateTime(java.time.LocalDateTime.now());
 
@@ -121,7 +122,7 @@ public class AuthController {
         User user = userService.getOne(new LambdaQueryWrapper<User>().eq(User::getPhone, phone));
         if (user == null) throw new BusinessException("该手机号未注册");
 
-        String md5Password = DigestUtils.md5DigestAsHex(password.getBytes());
+        String md5Password = DigestUtils.md5DigestAsHex((password + PWD_SALT).getBytes());
         if (!user.getPassword().equals(md5Password)) throw new BusinessException("密码错误，请重新输入");
 
         // 🚨 核心修复 3：去除商家的特判，只要 status == 0，统统视为被管理员强制熔断/封禁
@@ -158,7 +159,7 @@ public class AuthController {
         User user = userService.getOne(new LambdaQueryWrapper<User>().eq(User::getPhone, phone));
         if (user == null) throw new BusinessException("该手机号尚未注册");
 
-        user.setPassword(DigestUtils.md5DigestAsHex(newPassword.getBytes()));
+        user.setPassword(DigestUtils.md5DigestAsHex((newPassword + PWD_SALT).getBytes()));
         userService.updateById(user);
         stringRedisTemplate.delete(redisKey);
 

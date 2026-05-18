@@ -38,18 +38,31 @@ public class ConfigServiceImpl extends ServiceImpl<ConfigMapper, Config> impleme
 
     @Override
     public void updateEngineConfig(ConfigUpdateDTO dto) {
-        BigDecimal total = dto.getWDist()
-                .add(dto.getWUrgency())
-                .add(dto.getWCredit())
-                .add(dto.getWTag());
+        Config config = this.getById(1);
+        if (config == null) throw new BusinessException("系统配置未初始化");
 
+        BigDecimal wDist = dto.getWDist() != null ? dto.getWDist() : config.getWDist();
+        BigDecimal wUrgency = dto.getWUrgency() != null ? dto.getWUrgency() : config.getWUrgency();
+        BigDecimal wCredit = dto.getWCredit() != null ? dto.getWCredit() : config.getWCredit();
+        BigDecimal wTag = dto.getWTag() != null ? dto.getWTag() : config.getWTag();
+        BigDecimal wExpiration = dto.getWExpiration() != null ? dto.getWExpiration() : config.getWExpiration();
+        BigDecimal wStock = dto.getWStock() != null ? dto.getWStock() : config.getWStock();
+
+        BigDecimal total = wDist.add(wUrgency).add(wCredit).add(wTag).add(wExpiration).add(wStock);
         if (total.compareTo(new BigDecimal("1.00")) != 0) {
-            throw new BusinessException("参数错误：各项权重总和必须等于 1.00 (100%)");
+            throw new BusinessException("参数错误：六维权重总和必须等于 1.00 (当前=" + total + ")");
         }
 
-        Config config = new Config();
-        BeanUtils.copyProperties(dto, config);
-        config.setId(1);
+        // wTimeCoin is independent of the six-factor sum (volunteer-only bonus)
+        if (dto.getWTimeCoin() != null) config.setWTimeCoin(dto.getWTimeCoin());
+
+        config.setWDist(wDist);
+        config.setWUrgency(wUrgency);
+        config.setWCredit(wCredit);
+        config.setWTag(wTag);
+        config.setWExpiration(wExpiration);
+        config.setWStock(wStock);
+        if (dto.getSysMode() != null) config.setSysMode(dto.getSysMode());
 
         this.updateById(config);
     }
@@ -86,30 +99,44 @@ public class ConfigServiceImpl extends ServiceImpl<ConfigMapper, Config> impleme
     }
 
     private void applyPresetWeights(Config config, String mode) {
+        // 六维SAW权重预设 (wDist + wUrgency + wCredit + wTag + wExpiration + wStock = 1.00)
+        // wTimeCoin 独立于六维体系, 仅在志愿者抢单路径生效
         switch (mode) {
             case "NORMAL":
-                config.setWDist(new BigDecimal("0.80"));
-                config.setWUrgency(new BigDecimal("0.05"));
-                config.setWCredit(new BigDecimal("0.05"));
-                config.setWTag(new BigDecimal("0.10"));
+                config.setWDist(new BigDecimal("0.35"));
+                config.setWUrgency(new BigDecimal("0.20"));
+                config.setWCredit(new BigDecimal("0.15"));
+                config.setWTag(new BigDecimal("0.15"));
+                config.setWExpiration(new BigDecimal("0.10"));
+                config.setWStock(new BigDecimal("0.05"));
+                config.setWTimeCoin(new BigDecimal("0.05"));
                 break;
             case "WARNING_FREEZE":
-                config.setWDist(new BigDecimal("0.45"));
-                config.setWUrgency(new BigDecimal("0.25"));
-                config.setWCredit(new BigDecimal("0.10"));
+                config.setWDist(new BigDecimal("0.20"));
+                config.setWUrgency(new BigDecimal("0.30"));
+                config.setWCredit(new BigDecimal("0.15"));
                 config.setWTag(new BigDecimal("0.20"));
+                config.setWExpiration(new BigDecimal("0.05"));
+                config.setWStock(new BigDecimal("0.10"));
+                config.setWTimeCoin(new BigDecimal("0.10"));
                 break;
             case "EMERGENCY_RESPONSE":
-                config.setWDist(new BigDecimal("0.30"));
-                config.setWUrgency(new BigDecimal("0.40"));
+                config.setWDist(new BigDecimal("0.10"));
+                config.setWUrgency(new BigDecimal("0.45"));
                 config.setWCredit(new BigDecimal("0.05"));
                 config.setWTag(new BigDecimal("0.25"));
+                config.setWExpiration(new BigDecimal("0.05"));
+                config.setWStock(new BigDecimal("0.10"));
+                config.setWTimeCoin(new BigDecimal("0.15"));
                 break;
             case "RECOVERY":
-                config.setWDist(new BigDecimal("0.60"));
-                config.setWUrgency(new BigDecimal("0.15"));
-                config.setWCredit(new BigDecimal("0.10"));
-                config.setWTag(new BigDecimal("0.15"));
+                config.setWDist(new BigDecimal("0.30"));
+                config.setWUrgency(new BigDecimal("0.20"));
+                config.setWCredit(new BigDecimal("0.15"));
+                config.setWTag(new BigDecimal("0.20"));
+                config.setWExpiration(new BigDecimal("0.10"));
+                config.setWStock(new BigDecimal("0.05"));
+                config.setWTimeCoin(new BigDecimal("0.08"));
                 break;
         }
     }

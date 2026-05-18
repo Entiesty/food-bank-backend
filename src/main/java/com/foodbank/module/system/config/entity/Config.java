@@ -39,6 +39,18 @@ public class Config {
     @Schema(description = "多因子权重-弱势群体身份偏好")
     private BigDecimal wTag;
 
+    @JsonProperty("wExpiration")
+    @Schema(description = "多因子权重-物资临期偏好(FEFO)")
+    private BigDecimal wExpiration;
+
+    @JsonProperty("wStock")
+    @Schema(description = "多因子权重-据点库存偏好")
+    private BigDecimal wStock;
+
+    @JsonProperty("wTimeCoin")
+    @Schema(description = "多因子权重-志愿者时间币偏好")
+    private BigDecimal wTimeCoin;
+
     private LocalDateTime updateTime;
 
     @Schema(description = "当前模式激活时间")

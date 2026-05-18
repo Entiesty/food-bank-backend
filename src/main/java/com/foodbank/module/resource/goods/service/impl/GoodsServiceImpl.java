@@ -84,6 +84,13 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         } else {
             goods.setCurrentStationId(dto.getCurrentStationId());
             goods.setStatus((byte) 0);
+            // 僵尸单防御: 指定了驿站但驿站不存在则直接拒绝
+            if (dto.getCurrentStationId() != null) {
+                Station targetStation = stationMapper.selectById(dto.getCurrentStationId());
+                if (targetStation == null) {
+                    throw new BusinessException("所选驿站不存在，请刷新页面后重新选择");
+                }
+            }
         }
 
         boolean saved = this.save(goods);
