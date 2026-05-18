@@ -101,12 +101,16 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
             vo.setTotalDonatedGoods((int) totalGoods);
 
-            // 🚨 核心修复：消灭造假的“幽灵数据”
             if (totalGoods == 0) {
-                vo.setTotalHelpCount(0); // 没捐过就是0
+                vo.setTotalHelpCount(0);
+                vo.setTotalDonatedValue(BigDecimal.ZERO);
             } else {
-                vo.setTotalHelpCount((int) totalGoods * 3 + 2); // 有捐赠时，基础倍数加上合理浮动
+                vo.setTotalHelpCount((int) totalGoods * 3 + 2);
+                // SUM estimated_value from all goods
+                BigDecimal totalValue = goodsMapper.getMerchantTotalValue(userId);
+                vo.setTotalDonatedValue(totalValue != null ? totalValue : BigDecimal.ZERO);
             }
+            vo.setCsrLevel(user.getCsrLevel() != null ? (int) user.getCsrLevel() : 0);
         } else if (user.getRole() == 1) {
             vo.setUserTag(user.getUserTag());
             long received = dispatchOrderMapper.selectCount(new LambdaQueryWrapper<DispatchOrder>()

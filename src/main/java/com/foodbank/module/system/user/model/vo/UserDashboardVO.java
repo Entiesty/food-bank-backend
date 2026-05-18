@@ -18,6 +18,8 @@ public class UserDashboardVO {
     // ================= 🏪 爱心商家专属数据 =================
     private Integer totalDonatedGoods;    // 累计捐赠物资数量 (件/份)
     private Integer totalHelpCount;       // 累计帮助人次 (关联的已送达订单数)
+    private BigDecimal totalDonatedValue; // 累计捐赠物资估值总额 (元)
+    private Integer csrLevel;             // CSR荣誉等级: 0-普通, 1-铜牌, 2-银牌, 3-金牌
 
     // ================= 👴 受赠方专属数据 =================
     private String userTag;               // 特殊身份标签 (如 ELDERLY)

@@ -16,4 +16,8 @@
         </if>
     </select>
 
+    <select id="getMerchantTotalValue" resultType="java.math.BigDecimal">
+        SELECT COALESCE(SUM(estimated_value), 0) FROM fb_goods WHERE merchant_id = #{merchantId}
+    </select>
+
 </mapper>
