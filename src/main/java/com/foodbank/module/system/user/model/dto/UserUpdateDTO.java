@@ -31,4 +31,10 @@ public class UserUpdateDTO {
 
     @Schema(description = "受赠方健康备注")
     private String healthRemark;
+
+    @Schema(description = "受赠方关怀标签(逗号分隔多选)")
+    private String userTag;
+
+    @Schema(description = "商家行业经营范围")
+    private Byte industryType;
 }

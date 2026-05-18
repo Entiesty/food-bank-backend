@@ -42,6 +42,9 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
     @Autowired
     private UserMapper userMapper;
 
+    @Autowired
+    private com.foodbank.module.system.config.service.IConfigService configService;
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void donateGoods(DonateDTO dto) {
@@ -55,8 +58,10 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         goods.setCategory(dto.getCategory());
         goods.setStock(dto.getStock());
         goods.setExpirationDate(dto.getExpirationDate());
-        goods.setIsEmergencyOnly((byte) 0);
+        goods.setIsEmergencyOnly(dto.getIsEmergencyOnly() != null && dto.getIsEmergencyOnly() ? (byte) 1 : (byte) 0);
         goods.setGoodsImageUrl(dto.getGoodsImageUrl());
+        goods.setEstimatedValue(dto.getEstimatedValue() != null ? dto.getEstimatedValue() : java.math.BigDecimal.ZERO);
+        goods.setUnit(dto.getUnit() != null ? dto.getUnit() : "件");
 
         if (dto.getTags() != null && !dto.getTags().isEmpty()) {
             try {
@@ -83,6 +88,9 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
 
         boolean saved = this.save(goods);
         if (!saved) throw new BusinessException("物资入库失败，请稍后重试");
+
+        // 1.5 更新商家CSR统计
+        updateMerchantCsrStats(merchantId, dto.getStock());
 
         // 2. 处理 P2P 战时响应逻辑 (缝合求助单)
         boolean isP2P = false;
@@ -147,7 +155,7 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
             byte calculatedUrgency = 1;
             String cat = dto.getCategory();
 
-            if (cat != null && (cat.contains("生鲜") || cat.contains("速食品") || cat.contains("乳制品") || cat.contains("烘焙糕点"))) {
+            if (cat != null && (cat.contains("生鲜") || cat.contains("冷冻") || cat.contains("乳制品") || cat.contains("烘焙") || cat.contains("速食") || cat.contains("热食"))) {
                 calculatedUrgency = 3;
             }
 
@@ -267,7 +275,18 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
 
     @Override
     public List<Goods> getStationGoods(Long stationId) {
-        return this.list(new LambdaQueryWrapper<Goods>().eq(Goods::getCurrentStationId, stationId).eq(Goods::getStatus, (byte) 2).orderByAsc(Goods::getExpirationDate));
+        LambdaQueryWrapper<Goods> wrapper = new LambdaQueryWrapper<Goods>()
+                .eq(Goods::getCurrentStationId, stationId)
+                .eq(Goods::getStatus, (byte) 2)
+                .orderByAsc(Goods::getExpirationDate);
+
+        // 应急冻结期: 仅展示战备物资
+        com.foodbank.module.system.config.entity.Config config = configService.getCurrentConfig();
+        if ("WARNING_FREEZE".equals(config.getSysMode())) {
+            wrapper.eq(Goods::getIsEmergencyOnly, (byte) 1);
+        }
+
+        return this.list(wrapper);
     }
 
     @Override
@@ -286,5 +305,23 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
 
         this.updateById(goods);
         log.info("⚖️ 大仓手工平账: 物资[{}] 事由: {}", goods.getGoodsName(), dto.getReason());
+    }
+
+    private void updateMerchantCsrStats(Long merchantId, int newStock) {
+        User merchant = userMapper.selectById(merchantId);
+        if (merchant == null || merchant.getRole() != 2) return;
+
+        int totalDonations = (merchant.getTotalDonations() != null ? merchant.getTotalDonations() : 0) + newStock;
+        merchant.setTotalDonations(totalDonations);
+
+        // CSR等级自动递升
+        byte csrLevel = 0;
+        if (totalDonations >= 2000) csrLevel = 3;
+        else if (totalDonations >= 500) csrLevel = 2;
+        else if (totalDonations >= 100) csrLevel = 1;
+        merchant.setCsrLevel(csrLevel);
+
+        userMapper.updateById(merchant);
+        log.info("🏅 商家CSR更新: 商家[{}] 累计捐赠{}件, CSR等级: {}", merchantId, totalDonations, csrLevel);
     }
 }

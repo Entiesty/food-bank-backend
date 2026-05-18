@@ -40,4 +40,16 @@ public class Config {
     private BigDecimal wTag;
 
     private LocalDateTime updateTime;
+
+    @Schema(description = "当前模式激活时间")
+    private LocalDateTime modeActivatedAt;
+
+    @Schema(description = "模式切换操作人ID")
+    private Long modeActivatedBy;
+
+    @Schema(description = "灾区每人每日最大申领次数")
+    private Integer maxDailyClaims;
+
+    @Schema(description = "每公里补贴单价(元)")
+    private BigDecimal subsidyPerKm;
 }

@@ -17,6 +17,7 @@ import com.foodbank.module.trade.task.model.vo.MyTaskVO;
 import com.foodbank.module.trade.task.service.IDeliveryTaskService;
 import com.foodbank.module.system.user.entity.User;
 import com.foodbank.module.system.user.service.IUserService;
+import com.foodbank.module.system.config.service.IConfigService;
 import com.foodbank.websocket.WebSocketServer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +25,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -45,6 +47,9 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
 
     @Autowired
     private IGoodsService goodsService;
+
+    @Autowired
+    private IConfigService configService;
 
     // 🚨 修复后：三表级联状态同步的确认取货节点 (清除了 exceptionReason 污染)
     @Override
@@ -128,6 +133,11 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
             }
         }
 
+        // 3.5 记录实际配送距离 + 灾时触发油费补贴核算
+        if (dispatchOrder != null) {
+            recordDistanceAndSubsidy(deliveryTask, dispatchOrder, userId);
+        }
+
         // 4. 为志愿者发放信誉分
         rewardVolunteerCredit(userId, deliveryTask.getOrderId());
 
@@ -154,8 +164,29 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
             creditLog.setOrderId(orderId);
             creditLog.setChangeValue(rewardPoints);
             creditLog.setReason("完成订单送达，发放护航信誉分");
+            creditLog.setLogType((byte) 1);
             creditLogService.save(creditLog);
+
+            // 时间银行: 每完成1单配送奖励1时间币
+            rewardTimeCoin(userId, orderId);
         }
+    }
+
+    private void rewardTimeCoin(Long userId, Long orderId) {
+        int coinReward = 1;
+        userService.update(new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User>()
+                .eq(User::getUserId, userId)
+                .setSql("time_coin = COALESCE(time_coin, 0) + " + coinReward));
+
+        CreditLog coinLog = new CreditLog();
+        coinLog.setUserId(userId);
+        coinLog.setOrderId(orderId);
+        coinLog.setChangeValue(coinReward);
+        coinLog.setReason("时间银行存入: 完成配送获得1时间币");
+        coinLog.setLogType((byte) 2);
+        creditLogService.save(coinLog);
+
+        log.info("⏳ 时间银行: 骑士 [{}] 获得 {} 时间币", userId, coinReward);
     }
 
     @Override
@@ -278,5 +309,69 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         Page<MyTaskVO> resultPage = new Page<>(pageNum, pageSize, taskPage.getTotal());
         resultPage.setRecords(voList);
         return resultPage;
+    }
+
+    private void recordDistanceAndSubsidy(DeliveryTask task, DispatchOrder order, Long volunteerId) {
+        BigDecimal srcLat = null, srcLon = null, destLat = null, destLon = null;
+
+        if (order.getSourceLat() != null && order.getSourceLon() != null) {
+            srcLat = order.getSourceLat();
+            srcLon = order.getSourceLon();
+        }
+        if (order.getTargetLat() != null && order.getTargetLon() != null) {
+            destLat = order.getTargetLat();
+            destLon = order.getTargetLon();
+        }
+
+        if (srcLat != null && destLat != null) {
+            double distKm = haversine(srcLat.doubleValue(), srcLon.doubleValue(),
+                    destLat.doubleValue(), destLon.doubleValue());
+            task.setActualDistance(BigDecimal.valueOf(distKm).setScale(2, java.math.RoundingMode.HALF_UP));
+        } else {
+            task.setActualDistance(BigDecimal.ZERO);
+        }
+
+        com.foodbank.module.system.config.entity.Config config = configService.getCurrentConfig();
+        if ("EMERGENCY_RESPONSE".equals(config.getSysMode()) && task.getActualDistance().compareTo(new BigDecimal("5.0")) > 0) {
+            User volunteer = userService.getById(volunteerId);
+            double vehicleCoeff = switch (volunteer.getVehicleType() != null ? volunteer.getVehicleType() : 1) {
+                case 1 -> 0.0;
+                case 2 -> 0.5;
+                case 3 -> 1.0;
+                case 4 -> 1.5;
+                default -> 0.0;
+            };
+
+            BigDecimal subsidyPerKm = config.getSubsidyPerKm() != null ? config.getSubsidyPerKm() : new BigDecimal("1.50");
+            BigDecimal subsidy = task.getActualDistance()
+                    .multiply(subsidyPerKm)
+                    .multiply(BigDecimal.valueOf(vehicleCoeff))
+                    .setScale(2, java.math.RoundingMode.HALF_UP);
+
+            task.setSubsidyAmount(subsidy);
+            task.setSubsidyStatus((byte) 1);
+            task.setSubsidyCalcAt(LocalDateTime.now());
+
+            userService.update(new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User>()
+                    .eq(User::getUserId, volunteerId)
+                    .setSql("total_mileage = COALESCE(total_mileage, 0) + " + task.getActualDistance()));
+
+            log.info("⛽ 灾时补贴核算: 骑士[{}] 骑行{}km, 补贴{}元", volunteerId, task.getActualDistance(), subsidy);
+        } else {
+            task.setSubsidyStatus((byte) 0);
+            task.setSubsidyAmount(BigDecimal.ZERO);
+        }
+
+        this.updateById(task);
+    }
+
+    private double haversine(double lat1, double lon1, double lat2, double lon2) {
+        final int R = 6371;
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 }

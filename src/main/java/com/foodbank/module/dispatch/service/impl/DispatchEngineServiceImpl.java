@@ -57,6 +57,9 @@ public class DispatchEngineServiceImpl {
     @Autowired
     private GoodsMapper goodsMapper;
 
+    @Autowired
+    private com.foodbank.module.system.config.service.IConfigService configService;
+
     // 🚨 注入高并发双擎组件
     @Autowired
     private RedissonClient redissonClient;
@@ -68,14 +71,18 @@ public class DispatchEngineServiceImpl {
                 dispatchOrder.getTargetLon(), dispatchOrder.getTargetLat(),
                 dispatchOrder.getRequiredCategory(), dispatchOrder.getRequiredTags());
 
-        // 1. 领域大类映射 (Domain Mapping)
+        String sysMode = configService.getCurrentConfig().getSysMode();
+        log.info("【应急模式感知】 当前系统模式: {}", sysMode);
+
+        // 1. 领域大类映射 (Domain Mapping) — V6: 对齐前端四大分类体系
         List<String> targetCategories = new ArrayList<>();
         targetCategories.add(dispatchOrder.getRequiredCategory());
         String reqCat = dispatchOrder.getRequiredCategory();
 
-        if ("粮油副食".equals(reqCat)) targetCategories.addAll(Arrays.asList("米面粮油", "烘焙糕点", "速食品", "乳制品", "生鲜水果", "生鲜蔬菜", "生鲜冷冻"));
-        else if ("医疗与特需".equals(reqCat)) targetCategories.addAll(Arrays.asList("医疗用品", "助残设备", "营养品"));
-        else if ("应急与生活".equals(reqCat)) targetCategories.addAll(Arrays.asList("饮用水", "应急食品", "应急装备", "生活用品", "防寒衣物"));
+        if ("食品与饮料".equals(reqCat)) targetCategories.addAll(Arrays.asList("米面粮油", "方便速食", "烘焙糕点", "生鲜果蔬", "冷冻食品", "乳制品", "饮用水", "热食盒饭"));
+        else if ("医疗健康".equals(reqCat)) targetCategories.addAll(Arrays.asList("常备药品", "外用急救", "医疗器械", "营养补品"));
+        else if ("生活日用".equals(reqCat)) targetCategories.addAll(Arrays.asList("卫生护理", "防寒保暖", "寝具家纺", "洗漱用品", "纸品耗材"));
+        else if ("应急物资".equals(reqCat)) targetCategories.addAll(Arrays.asList("应急食品", "应急照明", "防护装备", "保暖物资"));
 
         // 解析并清洗 JSON 格式的标签
         List<String> reqTags = new ArrayList<>();
@@ -89,7 +96,7 @@ public class DispatchEngineServiceImpl {
         // ==========================================================
         // 🚀 L0级：战时点对点直达匹配 (Point-to-Point)
         // ==========================================================
-        List<DispatchOrder> directSupplyOrders = dispatchOrderMapper.selectPendingDirectSupplyOrders(targetCategories);
+        List<DispatchOrder> directSupplyOrders = dispatchOrderMapper.selectPendingDirectSupplyOrders(targetCategories, sysMode);
 
         for (DispatchOrder supply : directSupplyOrders) {
             Goods goods = goodsService.getById(supply.getGoodsId());
@@ -139,7 +146,7 @@ public class DispatchEngineServiceImpl {
             for (var result : geoResults.getContent()) {
                 Long stationId = Long.parseLong(result.getContent().getName());
 
-                List<Goods> stationGoodsList = goodsMapper.selectAvailableGoodsByStation(stationId, targetCategories);
+                List<Goods> stationGoodsList = goodsMapper.selectAvailableGoodsByStation(stationId, targetCategories, sysMode);
                 Goods bestMatchedGoods = null;
                 double maxTagScore = -1.0;
 

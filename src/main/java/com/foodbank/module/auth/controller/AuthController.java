@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.util.DigestUtils;
 import org.springframework.util.StringUtils;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Random;
@@ -64,7 +65,7 @@ public class AuthController {
 
     @Operation(summary = "1. 多角色开放注册入口", description = "支持多角色注册，包含 Redis 验证码比对与商家审核状态机")
     @PostMapping("/register")
-    public Result<String> register(@RequestBody RegisterDTO dto) {
+    public Result<String> register(@Validated @RequestBody RegisterDTO dto) {
         if (!StringUtils.hasText(dto.getPhone()) || !StringUtils.hasText(dto.getPassword())
                 || !StringUtils.hasText(dto.getUsername()) || !StringUtils.hasText(dto.getSmsCode())) {
             throw new BusinessException("请将注册信息填写完整");
@@ -92,12 +93,8 @@ public class AuthController {
         user.setUsername(dto.getUsername());
         user.setPassword(DigestUtils.md5DigestAsHex(dto.getPassword().getBytes()));
         user.setRole(reqRole);
-        user.setCreditScore(0);
-        if (reqRole == 1 && StringUtils.hasText(dto.getUserTag())) {
-            user.setUserTag(dto.getUserTag());
-        } else {
-            user.setUserTag("NORMAL"); // 其他角色默认 NORMAL
-        }
+        user.setCreditScore(100);
+        user.setUserTag("NORMAL");
 
         // 👇👇👇 🚨 核心修复：就在这里，补上这三行代码，接住商家传来的业态！
         if (reqRole == 2) {

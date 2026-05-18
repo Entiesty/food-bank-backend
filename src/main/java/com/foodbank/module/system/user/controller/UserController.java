@@ -77,6 +77,12 @@ public class UserController {
         if (dto.getHealthRemark() != null) {
             updateWrapper.set(User::getHealthRemark, dto.getHealthRemark());
         }
+        if (dto.getUserTag() != null) {
+            updateWrapper.set(User::getUserTag, dto.getUserTag());
+        }
+        if (dto.getIndustryType() != null) {
+            updateWrapper.set(User::getIndustryType, dto.getIndustryType());
+        }
 
         boolean success = userService.update(updateWrapper);
         if (!success) throw new BusinessException("资料更新失败，请重试");

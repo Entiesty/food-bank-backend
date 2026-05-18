@@ -76,4 +76,22 @@ public class User implements Serializable {
 
     @TableField("health_remark")
     private String healthRemark;
+
+    @TableField("time_coin")
+    private Integer timeCoin;
+
+    @TableField("total_mileage")
+    private BigDecimal totalMileage;
+
+    @TableField("csr_level")
+    private Byte csrLevel;
+
+    @TableField("total_donations")
+    private Integer totalDonations;
+
+    @TableField("daily_claim_count")
+    private Integer dailyClaimCount;
+
+    @TableField("last_claim_date")
+    private LocalDateTime lastClaimDate;
 }

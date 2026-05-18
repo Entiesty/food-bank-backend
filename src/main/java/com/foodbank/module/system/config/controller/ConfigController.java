@@ -5,6 +5,7 @@ import com.foodbank.common.exception.BusinessException;
 import com.foodbank.common.utils.UserContext;
 import com.foodbank.module.system.config.entity.Config;
 import com.foodbank.module.system.config.model.dto.ConfigUpdateDTO;
+import com.foodbank.module.system.config.model.dto.SwitchModeDTO;
 import com.foodbank.module.system.config.service.IConfigService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -29,7 +30,6 @@ public class ConfigController {
     @Operation(summary = "2. 热更新系统引擎配置")
     @PutMapping("/update")
     public Result<Void> updateConfig(@Validated @RequestBody ConfigUpdateDTO dto) {
-        // 核心风控安全鉴权：必须是管理员 (Role = 4) 才能更改系统运行模式和权重
         Byte role = UserContext.getUserRole();
         if (role == null || role != 4) {
             throw new BusinessException("越权操作警报：仅限 Root 指挥中心管理员修改调度引擎底层参数！");
@@ -37,5 +37,34 @@ public class ConfigController {
 
         configService.updateEngineConfig(dto);
         return Result.success(null, "底层调度引擎参数已热更新完毕，即时生效！");
+    }
+
+    @Operation(summary = "3. 应急状态机切换 (NORMAL → WARNING_FREEZE → EMERGENCY_RESPONSE → RECOVERY → NORMAL)")
+    @PutMapping("/switch-mode")
+    public Result<String> switchMode(@Validated @RequestBody SwitchModeDTO dto) {
+        Byte role = UserContext.getUserRole();
+        if (role == null || role != 4) {
+            throw new BusinessException("越权操作：仅限 Root 指挥中心管理员切换应急模式");
+        }
+
+        Long operatorId = UserContext.getUserId();
+        configService.switchMode(dto.getTargetMode(), operatorId);
+        return Result.success(dto.getTargetMode(), "系统模式已切换至: " + dto.getTargetMode());
+    }
+
+    @Operation(summary = "4. 战备物资存量预检 (切换 WARNING_FREEZE 前调用)")
+    @GetMapping("/pre-check")
+    public Result<java.util.Map<String, Object>> preCheckMode(@RequestParam String mode) {
+        Byte role = UserContext.getUserRole();
+        if (role == null || role != 4) {
+            throw new BusinessException("越权操作");
+        }
+        java.util.Map<String, Object> result = new java.util.HashMap<>();
+        if ("WARNING_FREEZE".equals(mode)) {
+            long emergencyCount = configService.countEmergencyGoods();
+            result.put("emergencyCount", emergencyCount);
+            result.put("warning", emergencyCount == 0 ? "当前无战备物资，进入预警冻结将导致所有日常物资从调度列表隐退" : null);
+        }
+        return Result.success(result);
     }
 }

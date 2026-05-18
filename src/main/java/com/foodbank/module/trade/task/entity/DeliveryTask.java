@@ -56,4 +56,20 @@ public class DeliveryTask implements Serializable {
     @Schema(description = "核销凭证照片URL")
     @TableField("proof_image")
     private String proofImage;
+
+    @Schema(description = "实际骑行距离(km)")
+    @TableField("actual_distance")
+    private java.math.BigDecimal actualDistance;
+
+    @Schema(description = "油费/体力补贴金额(元)")
+    @TableField("subsidy_amount")
+    private java.math.BigDecimal subsidyAmount;
+
+    @Schema(description = "补贴状态: 0-不适用, 1-待审核, 2-已发放")
+    @TableField("subsidy_status")
+    private Byte subsidyStatus;
+
+    @Schema(description = "补贴核算时间")
+    @TableField("subsidy_calc_at")
+    private LocalDateTime subsidyCalcAt;
 }

@@ -7,4 +7,6 @@ import com.foodbank.module.system.config.model.dto.ConfigUpdateDTO;
 public interface IConfigService extends IService<Config> {
     Config getCurrentConfig();
     void updateEngineConfig(ConfigUpdateDTO dto);
+    void switchMode(String targetMode, Long operatorId);
+    long countEmergencyGoods();
 }

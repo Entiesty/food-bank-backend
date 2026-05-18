@@ -20,13 +20,19 @@ import com.foodbank.module.trade.order.service.IDispatchOrderService;
 import com.foodbank.module.trade.task.entity.DeliveryTask;
 import com.foodbank.module.trade.task.service.IDeliveryTaskService;
 import com.foodbank.websocket.WebSocketServer;
+import com.foodbank.module.system.config.entity.Config;
+import com.foodbank.module.system.config.service.IConfigService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
@@ -50,6 +56,12 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
     @Autowired
     @org.springframework.context.annotation.Lazy
     private com.foodbank.module.resource.goods.service.IGoodsService goodsService;
+
+    @Autowired
+    private IConfigService configService;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     private void enrichOrderNames(List<DispatchOrder> orders) {
         if (orders == null || orders.isEmpty()) return;
@@ -123,6 +135,12 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
     public String publishDemandOrder(DemandPublishDTO dto) {
         Long currentUserId = UserContext.getUserId();
         if (currentUserId == null) throw new BusinessException("用户信息获取失败，请重新登录");
+
+        // 灾区配给制: 应急模式下检查每日申领配额
+        Config config = configService.getCurrentConfig();
+        if ("EMERGENCY_RESPONSE".equals(config.getSysMode()) || "WARNING_FREEZE".equals(config.getSysMode())) {
+            checkRationQuota(currentUserId, config);
+        }
 
         DispatchOrder dispatchOrder = new DispatchOrder();
 
@@ -285,7 +303,8 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             Double volLon = volunteer.getCurrentLon() != null ? volunteer.getCurrentLon().doubleValue() : null;
             Double volLat = volunteer.getCurrentLat() != null ? volunteer.getCurrentLat().doubleValue() : null;
             int creditScore = volunteer.getCreditScore() != null ? volunteer.getCreditScore() : 100;
-            dispatchStrategy.rankOrdersForVolunteer(voList, volLon, volLat, creditScore);
+            int timeCoin = volunteer.getTimeCoin() != null ? volunteer.getTimeCoin() : 0;
+            dispatchStrategy.rankOrdersForVolunteer(voList, volLon, volLat, creditScore, timeCoin);
         }
 
         Page<AvailableOrderVO> resultPage = new Page<>(pageNum, pageSize, orderPage.getTotal());
@@ -497,5 +516,41 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             }
         }
         return result;
+    }
+
+    private void checkRationQuota(Long userId, Config config) {
+        int maxClaims = config.getMaxDailyClaims() != null ? config.getMaxDailyClaims() : 3;
+        String today = LocalDate.now().toString();
+        String redisKey = "ration:daily:" + userId + ":" + today;
+
+        // Redis 原子计数: INCR + TTL 到次日0点
+        Long currentCount = stringRedisTemplate.opsForValue().increment(redisKey);
+        if (currentCount != null && currentCount == 1) {
+            long secondsUntilMidnight = ChronoUnit.SECONDS.between(
+                    LocalDateTime.now(), LocalDate.now().plusDays(1).atStartOfDay());
+            stringRedisTemplate.expire(redisKey, secondsUntilMidnight, TimeUnit.SECONDS);
+        }
+
+        if (currentCount != null && currentCount > maxClaims) {
+            // 回滚 Redis 计数
+            stringRedisTemplate.opsForValue().decrement(redisKey);
+            throw new BusinessException("灾区配给制: 您今日申领次数已达上限(" + maxClaims + "次), 请明日再试。资源有限，请理解!");
+        }
+
+        // DB兜底: 同步更新 sys_user.daily_claim_count
+        User user = userService.getById(userId);
+        if (user != null) {
+            LocalDate lastClaimDate = user.getLastClaimDate() != null
+                    ? user.getLastClaimDate().toLocalDate() : null;
+            int newCount;
+            if (lastClaimDate == null || !lastClaimDate.equals(LocalDate.now())) {
+                newCount = 1;
+            } else {
+                newCount = (user.getDailyClaimCount() != null ? user.getDailyClaimCount() : 0) + 1;
+            }
+            user.setDailyClaimCount(newCount);
+            user.setLastClaimDate(LocalDateTime.now());
+            userService.updateById(user);
+        }
     }
 }

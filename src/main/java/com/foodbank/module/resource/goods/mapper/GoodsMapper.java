@@ -9,5 +9,5 @@ import java.util.List;
 @Mapper
 public interface GoodsMapper extends BaseMapper<Goods> {
     // 自定义查询：加速驿站可用物资的检索
-    List<Goods> selectAvailableGoodsByStation(@Param("stationId") Long stationId, @Param("categories") List<String> categories);
+    List<Goods> selectAvailableGoodsByStation(@Param("stationId") Long stationId, @Param("categories") List<String> categories, @Param("sysMode") String sysMode);
 }

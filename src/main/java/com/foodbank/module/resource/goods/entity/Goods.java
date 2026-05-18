@@ -63,4 +63,10 @@ public class Goods implements Serializable {
     // 👇👇👇 🚨 补上这一段：物资实拍图持久化字段
     @TableField("goods_image_url")
     private String goodsImageUrl;
+
+    @TableField("estimated_value")
+    private java.math.BigDecimal estimatedValue;
+
+    @TableField("unit")
+    private String unit;
 }

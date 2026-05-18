@@ -50,6 +50,8 @@ public class VolunteerController {
 
         Map<String, Object> data = new HashMap<>();
         data.put("creditScore", currentScore);
+        data.put("timeCoin", user.getTimeCoin() != null ? user.getTimeCoin() : 0);
+        data.put("totalMileage", user.getTotalMileage() != null ? user.getTotalMileage() : 0);
         data.put("beatPercentage", beatPercentage);
         data.put("levelName", getLevelName(currentScore));
         return Result.success(data);

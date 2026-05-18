@@ -7,6 +7,10 @@ spring:
   application:
     name: food-bank-backend
 
+  devtools:
+    restart:
+      enabled: false
+
   # JDK 21 虚拟线程：提升调度系统并发性能
   threads:
     virtual:

@@ -9,5 +9,5 @@ import java.util.List;
 @Mapper
 public interface DispatchOrderMapper extends BaseMapper<DispatchOrder> {
     // 自定义查询：获取所有无驿站(点对点)的待处理商家供应单，作为 L0 级雷达源
-    List<DispatchOrder> selectPendingDirectSupplyOrders(@Param("categories") List<String> categories);
+    List<DispatchOrder> selectPendingDirectSupplyOrders(@Param("categories") List<String> categories, @Param("sysMode") String sysMode);
 }

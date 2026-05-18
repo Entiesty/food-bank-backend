@@ -48,6 +48,10 @@ public class CreditLog implements Serializable {
     @TableField("create_time")
     private LocalDateTime createTime;
 
+    @Schema(description = "1-信誉分, 2-时间币, 3-补贴, 4-CSR等级")
+    @TableField("log_type")
+    private Byte logType;
+
     // 👇 加上这个虚拟字段，用来装前端需要的真实订单编号
     @TableField(exist = false)
     private String orderSn;

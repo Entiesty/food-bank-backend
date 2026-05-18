@@ -11,6 +11,9 @@
         <foreach item="cat" collection="categories" open="(" separator="," close=")">
             #{cat}
         </foreach>
+        <if test="sysMode == 'WARNING_FREEZE'">
+            AND is_emergency_only = 1
+        </if>
     </select>
 
 </mapper>

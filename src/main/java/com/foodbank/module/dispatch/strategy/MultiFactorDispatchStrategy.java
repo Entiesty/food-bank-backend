@@ -76,6 +76,10 @@ public class MultiFactorDispatchStrategy {
      * 计算真正的“接驾距离”，并融合信誉与紧急度进行最终打分
      */
     public void rankOrdersForVolunteer(List<AvailableOrderVO> orders, Double volLon, Double volLat, int volCredit) {
+        rankOrdersForVolunteer(orders, volLon, volLat, volCredit, 0);
+    }
+
+    public void rankOrdersForVolunteer(List<AvailableOrderVO> orders, Double volLon, Double volLat, int volCredit, int timeCoin) {
         if (orders == null || orders.isEmpty() || volLon == null || volLat == null) {
             return;
         }
@@ -84,6 +88,7 @@ public class MultiFactorDispatchStrategy {
         double wDist = activeConfig.getWDist().doubleValue();
         double wUrgency = activeConfig.getWUrgency().doubleValue();
         double wCredit = activeConfig.getWCredit().doubleValue();
+        double wTimeCoin = 0.05;
 
         // 1. 计算接驾距离并寻找极值用于归一化
         double maxDist = 1.0;
@@ -111,8 +116,10 @@ public class MultiFactorDispatchStrategy {
             double normUrgency = order.getUrgencyLevel() / 10.0;
             // C. 信誉分赋能 (高信誉骑士获得基础分加成，更容易抢到好单)
             double normCredit = Math.min(volCredit / 150.0, 1.0);
+            // D. 时间币赋能 (累计服务时长越多的志愿者优先级越高)
+            double normTimeCoin = Math.min(timeCoin / 50.0, 1.0);
 
-            double finalScore = (normDist * wDist) + (normUrgency * wUrgency) + (normCredit * wCredit);
+            double finalScore = (normDist * wDist) + (normUrgency * wUrgency) + (normCredit * wCredit) + (normTimeCoin * wTimeCoin);
             order.setMatchScore(finalScore);
         }
 

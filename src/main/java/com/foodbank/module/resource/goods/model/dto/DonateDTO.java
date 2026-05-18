@@ -54,4 +54,13 @@ public class DonateDTO {
     // 👇👇👇 🚨 补上这一段：接收物资实拍图
     @Schema(description = "物资实拍图URL")
     private String goodsImageUrl;
+
+    @Schema(description = "物资市场估值(元)")
+    private java.math.BigDecimal estimatedValue;
+
+    @Schema(description = "计量单位")
+    private String unit;
+
+    @Schema(description = "是否仅限应急模式流通")
+    private Boolean isEmergencyOnly;
 }
