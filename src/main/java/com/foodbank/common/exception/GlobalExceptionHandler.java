@@ -64,7 +64,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(value = Exception.class)
     public Result<?> handleException(Exception e) {
-        log.error("🔥 系统异常: {}", e.getMessage());
-        return Result.failed(ResultCode.FAILED);
+        log.error("🔥 系统异常: {}", e.getMessage(), e);
+        return Result.failed(ResultCode.FAILED.getCode(), e.getMessage());
     }
 }
