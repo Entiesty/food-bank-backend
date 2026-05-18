@@ -49,4 +49,14 @@ public class AvailableOrderVO {
      * 多因子调度引擎算出的综合匹配分
      */
     private Double matchScore;
+
+    /**
+     * 物资重量等级 (1轻量/2标准/3重载) — 前端双维容量过滤
+     */
+    private Integer weightLevel;
+
+    /**
+     * 物资体积等级 (1轻量/2标准/3重载) — 前端双维容量过滤
+     */
+    private Integer volumeLevel;
 }

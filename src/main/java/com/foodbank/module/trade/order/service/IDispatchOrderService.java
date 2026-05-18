@@ -13,7 +13,7 @@ public interface IDispatchOrderService extends IService<DispatchOrder> {
     void switchOrderToPickup(Long orderId);
     Page<DispatchOrder> getAdminOrderPage(int pageNum, int pageSize, String orderSn, Byte status, Byte deliveryMethod);
     void cancelOrder(Long orderId);
-    List<DispatchOrder> getPendingOrdersForMap();
+    List<DispatchOrder> getPendingOrdersForMap(Double currentLon, Double currentLat);
     void confirmReceiptAndRate(Long orderId, Long userId, Integer rating, String comment);
 
     // 🚀 万能自提验码核销（管理员/商家可用）

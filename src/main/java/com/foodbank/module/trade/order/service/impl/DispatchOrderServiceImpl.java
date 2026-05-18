@@ -107,13 +107,76 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
     }
 
     @Override
-    public List<DispatchOrder> getPendingOrdersForMap() {
+    public List<DispatchOrder> getPendingOrdersForMap(Double currentLon, Double currentLat) {
         List<DispatchOrder> list = this.list(new LambdaQueryWrapper<DispatchOrder>()
                 .eq(DispatchOrder::getStatus, (byte) 0)
                 .ne(DispatchOrder::getDeliveryMethod, (byte) 2)
+                .orderByDesc(DispatchOrder::getUrgencyLevel)
                 .orderByDesc(DispatchOrder::getCreateTime));
         enrichOrderNames(list);
+
+        // 【载具容量预过滤】剔除当前志愿者无法装载的订单
+        Long userId = UserContext.getUserId();
+        if (userId != null) {
+            User vol = userService.getById(userId);
+            if (vol != null) {
+                list = list.stream().filter(o -> canVolunteerCarry(o, vol)).collect(java.util.stream.Collectors.toList());
+            }
+        }
+
+        // 🚀 按志愿者位置综合排序：紧急度 70% + 距离 30%
+        if (currentLon != null && currentLat != null) {
+            list.sort((a, b) -> {
+                double scoreA = mapOrderScore(a, currentLon, currentLat);
+                double scoreB = mapOrderScore(b, currentLon, currentLat);
+                return Double.compare(scoreB, scoreA);
+            });
+        }
         return list;
+    }
+
+    /**
+     * 调度大屏订单综合评分：紧急度归一化(0-1) × 0.7 + 距离归一化(0-1) × 0.3
+     */
+    private double mapOrderScore(DispatchOrder order, Double volLon, Double volLat) {
+        double urgencyNorm = (order.getUrgencyLevel() != null ? order.getUrgencyLevel() : 1) / 10.0;
+        double distNorm = 0.5;
+        if (order.getSourceLon() != null && order.getSourceLat() != null) {
+            double distKm = haversine(volLat, volLon,
+                    order.getSourceLat().doubleValue(), order.getSourceLon().doubleValue());
+            distNorm = Math.max(0.0, 1.0 - distKm / 15.0);
+        }
+        return urgencyNorm * 0.7 + distNorm * 0.3;
+    }
+
+    /**
+     * 双维绝对阈值校验（严格 1对1 履约，不累计）: 重量或体积任一超限即拦截
+     */
+    private boolean canVolunteerCarry(DispatchOrder order, User volunteer) {
+        if (order.getGoodsId() == null) return true;
+        com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(order.getGoodsId());
+        if (goods == null) return true;
+
+        Integer vType = volunteer.getVehicleType() != null ? volunteer.getVehicleType() : 1;
+        int maxW = vType == 1 ? 2 : (vType == 2 ? 4 : (vType == 3 ? 10 : 100));
+        int maxV = vType == 1 ? 2 : (vType == 2 ? 5 : (vType == 3 ? 15 : 100));
+
+        int wl = goods.getWeightLevel() != null ? goods.getWeightLevel() : 1;
+        int vl = goods.getVolumeLevel() != null ? goods.getVolumeLevel() : 1;
+        int wp = wl == 3 ? 20 : (wl == 2 ? 5 : 1);
+        int vp = vl == 3 ? 40 : (vl == 2 ? 5 : 1);
+
+        return wp <= maxW && vp <= maxV;
+    }
+
+    private static double haversine(double lat1, double lon1, double lat2, double lon2) {
+        final int R = 6371;
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
     @Override
@@ -223,6 +286,10 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                 .orderByDesc(DispatchOrder::getUrgencyLevel)
                 .orderByDesc(DispatchOrder::getCreateTime));
 
+        // 加载志愿者信息（SAW 排序用）
+        Long userId = UserContext.getUserId();
+        User volunteer = userService.getById(userId);
+
         List<AvailableOrderVO> voList = orderPage.getRecords().stream().map(order -> {
             String sourceName = "未知起点";
             String sourceAddress = "位置待确认";
@@ -288,17 +355,22 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     if (targetLat == null) targetLat = recipient.getCurrentLat();
                 }
             }
+            // 查询物资双维等级供前端容量校验
+            int wl = 1, vl = 1;
+            if (order.getGoodsId() != null) {
+                com.foodbank.module.resource.goods.entity.Goods g = goodsService.getById(order.getGoodsId());
+                if (g != null) { wl = g.getWeightLevel(); vl = g.getVolumeLevel(); }
+            }
             return AvailableOrderVO.builder()
                     .orderId(order.getOrderId()).orderSn(order.getOrderSn())
                     .goodsName(order.getGoodsName()).goodsCount(order.getGoodsCount())
                     .requiredCategory(order.getRequiredCategory()).urgencyLevel(order.getUrgencyLevel())
                     .sourceName(sourceName).sourceAddress(sourceAddress).sourceLon(sourceLon).sourceLat(sourceLat)
                     .targetName(targetName).targetAddress(targetAddress).targetLon(targetLon).targetLat(targetLat)
-                    .createTime(order.getCreateTime()).build();
+                    .createTime(order.getCreateTime())
+                    .weightLevel(wl).volumeLevel(vl).build();
         }).collect(Collectors.toList());
 
-        Long userId = UserContext.getUserId();
-        User volunteer = userService.getById(userId);
         if (volunteer != null) {
             Double volLon = volunteer.getCurrentLon() != null ? volunteer.getCurrentLon().doubleValue() : null;
             Double volLat = volunteer.getCurrentLat() != null ? volunteer.getCurrentLat().doubleValue() : null;
@@ -335,14 +407,36 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         boolean updated = this.updateById(order);
         if (!updated) throw new BusinessException("撤销失败，请重试");
 
-        // 【库存兜底回滚】
-        if (order.getDeliveryMethod() != null && order.getDeliveryMethod() == 2 && order.getGoodsId() != null) {
+        // 【级联作废已分配的任务】若骑手已抢单但未取货，同步作废任务防止幽灵数据
+        DeliveryTask task = taskService.getOne(new LambdaQueryWrapper<DeliveryTask>()
+                .eq(DeliveryTask::getOrderId, orderId));
+        if (task != null) {
+            if (task.getTaskStatus() >= 2) {
+                throw new BusinessException("志愿者已取货正在途中，无法撤销订单");
+            }
+            task.setTaskStatus((byte) 0);
+            taskService.updateById(task);
+        }
+
+        // 【库存兜底回滚】自提订单取消后释放已锁定的物资
+        if (order.getGoodsId() != null) {
             com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(order.getGoodsId());
             if (goods != null) {
-                goods.setStock(goods.getStock() + 1);
+                if (order.getDeliveryMethod() != null && order.getDeliveryMethod() == 2) {
+                    goods.setStock(goods.getStock() + 1);
+                }
                 if (goods.getStatus() == 3) goods.setStatus((byte) 2);
                 goodsService.updateById(goods);
             }
+        }
+
+        // 【WebSocket 广播】推送给所有在线骑手，触发前端列表刷新
+        try {
+            String jsonMsg = "{\"type\":\"ORDER_CANCELLED\",\"orderId\":" + orderId
+                    + ",\"orderSn\":\"" + order.getOrderSn() + "\"}";
+            WebSocketServer.broadcast(jsonMsg);
+        } catch (Exception e) {
+            log.error("取消订单 WebSocket 广播失败 orderId=" + orderId, e);
         }
     }
 

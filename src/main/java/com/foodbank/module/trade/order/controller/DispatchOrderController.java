@@ -28,10 +28,12 @@ public class DispatchOrderController {
     @Autowired
     private IDispatchOrderService orderService;
 
-    @Operation(summary = "获取大屏待处理订单")
+    @Operation(summary = "获取大屏待处理订单，按志愿者位置综合排序")
     @GetMapping("/pending-list")
-    public Result<List<DispatchOrder>> getPendingOrders() {
-        return Result.success(orderService.getPendingOrdersForMap());
+    public Result<List<DispatchOrder>> getPendingOrders(
+            @RequestParam(required = false) Double currentLon,
+            @RequestParam(required = false) Double currentLat) {
+        return Result.success(orderService.getPendingOrdersForMap(currentLon, currentLat));
     }
 
     @Operation(summary = "发布物资求助单/自提单")
