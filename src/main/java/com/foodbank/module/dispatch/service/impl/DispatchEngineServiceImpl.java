@@ -2,6 +2,7 @@ package com.foodbank.module.dispatch.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.foodbank.common.exception.BusinessException;
+import com.foodbank.common.utils.UserContext;
 import com.foodbank.config.RabbitMQConfig;
 import com.foodbank.module.trade.order.entity.DispatchOrder;
 import com.foodbank.module.trade.task.entity.DeliveryTask;
@@ -132,6 +133,7 @@ public class DispatchEngineServiceImpl {
 
         if (!candidates.isEmpty()) {
             log.info("🔥 L0级直达匹配成功！发现 {} 个紧急供应源，将直接指派骑士越过驿站！", candidates.size());
+            enrichRiderDistance(candidates);
             return dispatchStrategy.calculateAndRank(candidates, dispatchOrder.getUrgencyLevel());
         }
 
@@ -174,7 +176,33 @@ public class DispatchEngineServiceImpl {
         }
 
         if (candidates.isEmpty()) return new ArrayList<>();
+        enrichRiderDistance(candidates);
         return dispatchStrategy.calculateAndRank(candidates, dispatchOrder.getUrgencyLevel());
+    }
+
+    /**
+     * 注入骑手到取货点的真实骑行距离/耗时，让前端展示总行程而非仅配送段
+     */
+    private void enrichRiderDistance(List<DispatchCandidateVO> candidates) {
+        Long userId = UserContext.getUserId();
+        if (userId == null) return;
+        User rider = userService.getById(userId);
+        if (rider == null || rider.getCurrentLon() == null || rider.getCurrentLat() == null) return;
+        if (rider.getRole() == null || rider.getRole() != 3) return;
+
+        String riderOrigin = rider.getCurrentLon() + "," + rider.getCurrentLat();
+        for (DispatchCandidateVO c : candidates) {
+            Station s = c.getStation();
+            if (s == null || s.getLongitude() == null || s.getLatitude() == null) continue;
+            String pickupDest = s.getLongitude() + "," + s.getLatitude();
+            try {
+                AmapDirectionResponse.Path path = amapClientService.getRidingDistance(riderOrigin, pickupDest);
+                c.setRiderDistance(path.distance());
+                c.setRiderDuration(path.duration());
+            } catch (Exception e) {
+                log.error("骑手到取货点路线规划失败 stationId={}", s.getStationId(), e);
+            }
+        }
     }
 
     // JSON 标签安全算分引擎

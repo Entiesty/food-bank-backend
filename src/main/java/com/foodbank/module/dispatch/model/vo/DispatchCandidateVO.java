@@ -28,6 +28,12 @@ public class DispatchCandidateVO {
     // 骑行预计耗时（秒）- 接收高德地图返回的时间
     private Long duration;
 
+    // 骑手到取货点的距离（米）
+    private Long riderDistance;
+
+    // 骑手到取货点的预计耗时（秒）
+    private Long riderDuration;
+
     // 当前可用库存
     private int currentStock;
 
