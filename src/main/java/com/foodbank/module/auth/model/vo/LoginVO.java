@@ -27,4 +27,7 @@ public class LoginVO {
 
     @Schema(description = "用户角色 (1:受赠方, 2:商家, 3:志愿者, 4:管理员)")
     private Byte role;
+
+    @Schema(description = "受赠方配送类型: 0=可自取, 1=仅上门")
+    private Integer deliveryType;
 }

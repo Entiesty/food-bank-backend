@@ -85,6 +85,7 @@ public class UserController {
         }
         if (dto.getDeliveryType() != null) {
             updateWrapper.set(User::getDeliveryType, dto.getDeliveryType());
+            updateWrapper.set(User::getIsVerified, (byte) 0); // 修改配送方式须重新审核
         }
 
         boolean success = userService.update(updateWrapper);

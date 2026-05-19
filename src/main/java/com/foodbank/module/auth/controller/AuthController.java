@@ -139,7 +139,8 @@ public class AuthController {
 
         LoginVO loginVO = LoginVO.builder()
                 .token(token).userId(realUserId)
-                .username(user.getUsername()).role(user.getRole()).build();
+                .username(user.getUsername()).role(user.getRole())
+                .deliveryType(user.getDeliveryType()).build();
 
         return Result.success(loginVO, "登录成功，欢迎回来：" + user.getUsername());
     }
