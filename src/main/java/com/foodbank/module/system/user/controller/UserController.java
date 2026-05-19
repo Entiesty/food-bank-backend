@@ -83,6 +83,9 @@ public class UserController {
         if (dto.getIndustryType() != null) {
             updateWrapper.set(User::getIndustryType, dto.getIndustryType());
         }
+        if (dto.getDeliveryType() != null) {
+            updateWrapper.set(User::getDeliveryType, dto.getDeliveryType());
+        }
 
         boolean success = userService.update(updateWrapper);
         if (!success) throw new BusinessException("资料更新失败，请重试");

@@ -37,4 +37,7 @@ public class UserUpdateDTO {
 
     @Schema(description = "商家行业经营范围")
     private Byte industryType;
+
+    @Schema(description = "受赠方配送方式: 0=可自取食物银行, 1=仅限上门配送")
+    private Integer deliveryType;
 }
