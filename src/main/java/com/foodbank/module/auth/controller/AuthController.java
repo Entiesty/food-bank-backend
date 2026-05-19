@@ -104,7 +104,7 @@ public class AuthController {
         // 👆👆👆
 
         user.setIdentityProofUrl(dto.getIdentityProofUrl());
-        user.setIsVerified((byte) 1); // V6: 所有角色注册即通过，不再需要手动审核
+        user.setIsVerified((byte) 0); // ✅ FIX-4: 注册后须完善资料并等待管理员审核
 
         user.setCreateTime(java.time.LocalDateTime.now());
 

@@ -66,6 +66,19 @@ public class OrderTaskConsumer {
 
         } catch (Exception e) {
             log.error("❌ 消费抢单消息失败，数据：{}", message, e);
+            // ✅ FIX-1: 异常回滚 — 将订单状态重置为0(待调度), 防止幽灵孤岛订单
+            try {
+                Object oid = message.get("orderId");
+                if (oid != null) {
+                    Long orderId = Long.valueOf(oid.toString());
+                    orderService.update(new LambdaUpdateWrapper<DispatchOrder>()
+                            .eq(DispatchOrder::getOrderId, orderId)
+                            .set(DispatchOrder::getStatus, 0));
+                    log.info("🔄 系统自愈: 订单 {} 已回滚至待调度池", orderId);
+                }
+            } catch (Exception rollbackEx) {
+                log.error("💀 终极异常: 订单回滚也失败了, 需人工介入!", rollbackEx);
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.foodbank.module.dispatch.controller;
 
 import com.foodbank.common.api.Result;
+import com.foodbank.common.exception.BusinessException;
 import com.foodbank.common.utils.UserContext;
 import com.foodbank.module.trade.order.entity.DispatchOrder;
 import com.foodbank.module.dispatch.model.dto.DemandPublishDTO;
@@ -44,6 +45,10 @@ public class DispatchController {
     @Operation(summary = "0. 模拟智能派单计算(答辩演示专用)", description = "直接输入经纬度和需求，不落库，直接返回算法打分与排序结果")
     @PostMapping("/smart-match")
     public Result<List<DispatchCandidateVO>> smartMatch(@Validated @RequestBody DemandPublishDTO reqDTO) {
+        // ✅ FIX-3: 补齐鉴权 — 拒绝未登录匿名调用
+        Long userId = UserContext.getUserId();
+        if (userId == null) throw new BusinessException("请先登录后再使用智能撮合引擎");
+
         // 将前端传来的 DTO 组装成临时的 Order 对象喂给底层算法引擎
         DispatchOrder tempDispatchOrder = new DispatchOrder();
         tempDispatchOrder.setTargetLon(reqDTO.getTargetLon());
