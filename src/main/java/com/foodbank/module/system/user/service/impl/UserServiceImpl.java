@@ -58,7 +58,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     }
 
     @Override
-    public boolean auditUser(Long userId, boolean isPass) {
+    public boolean auditUser(Long userId, boolean isPass, Integer deliveryType) {
         User user = this.getById(userId);
         if (user == null) {
             throw new BusinessException("该用户不存在");
@@ -67,6 +67,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         if (isPass) {
             user.setIsVerified((byte) 1);
             user.setStatus((byte) 1);
+            if (deliveryType != null && user.getRole() == 1) {
+                user.setDeliveryType(deliveryType);
+            }
         } else {
             user.setIsVerified((byte) 0);
             user.setIdentityProofUrl(null);

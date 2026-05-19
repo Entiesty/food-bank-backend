@@ -15,9 +15,9 @@ public interface IUserService extends IService<User> {
     Page<User> getAuditPage(int pageNum, int pageSize, Byte role, Byte isVerified);
 
     /**
-     * 审批用户资质
+     * 审批用户资质 (deliveryType 仅对受赠者生效: 0=可自取 1=仅上门)
      */
-    boolean auditUser(Long userId, boolean isPass);
+    boolean auditUser(Long userId, boolean isPass, Integer deliveryType);
 
     /**
      * 获取千人千面角色成就看板数据

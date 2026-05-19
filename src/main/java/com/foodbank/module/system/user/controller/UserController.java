@@ -121,8 +121,10 @@ public class UserController {
 
     @Operation(summary = "5. 提交资质审核结果 (管理员端)")
     @PutMapping("/admin/audit/{userId}")
-    public Result<String> submitAudit(@PathVariable Long userId, @RequestParam boolean isPass) {
-        userService.auditUser(userId, isPass);
+    public Result<String> submitAudit(@PathVariable Long userId,
+                                       @RequestParam boolean isPass,
+                                       @RequestParam(required = false) Integer deliveryType) {
+        userService.auditUser(userId, isPass, deliveryType);
         return Result.success(null, isPass ? "审核已通过，该用户已获得平台信任背书！" : "已驳回审核，系统将要求用户重新上传材料。");
     }
 

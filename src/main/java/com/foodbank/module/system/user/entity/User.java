@@ -36,6 +36,9 @@ public class User implements Serializable {
     @TableField("is_verified")
     private Byte isVerified;
 
+    @TableField("delivery_type")
+    private Integer deliveryType;
+
     @TableField("identity_proof_url")
     private String identityProofUrl;
 
