@@ -25,7 +25,7 @@ public class ConfigServiceImpl extends ServiceImpl<ConfigMapper, Config> impleme
     @Autowired
     private GoodsMapper goodsMapper;
 
-    private static final Set<String> VALID_MODES = Set.of("NORMAL", "WARNING_FREEZE", "EMERGENCY_RESPONSE", "RECOVERY");
+    private static final Set<String> VALID_MODES = Set.of("NORMAL", "EMERGENCY");
 
     @Override
     public Config getCurrentConfig() {
@@ -111,16 +111,7 @@ public class ConfigServiceImpl extends ServiceImpl<ConfigMapper, Config> impleme
                 config.setWStock(new BigDecimal("0.05"));
                 config.setWTimeCoin(new BigDecimal("0.05"));
                 break;
-            case "WARNING_FREEZE":
-                config.setWDist(new BigDecimal("0.20"));
-                config.setWUrgency(new BigDecimal("0.30"));
-                config.setWCredit(new BigDecimal("0.15"));
-                config.setWTag(new BigDecimal("0.20"));
-                config.setWExpiration(new BigDecimal("0.05"));
-                config.setWStock(new BigDecimal("0.10"));
-                config.setWTimeCoin(new BigDecimal("0.10"));
-                break;
-            case "EMERGENCY_RESPONSE":
+            case "EMERGENCY":
                 config.setWDist(new BigDecimal("0.10"));
                 config.setWUrgency(new BigDecimal("0.45"));
                 config.setWCredit(new BigDecimal("0.05"));
@@ -128,15 +119,6 @@ public class ConfigServiceImpl extends ServiceImpl<ConfigMapper, Config> impleme
                 config.setWExpiration(new BigDecimal("0.05"));
                 config.setWStock(new BigDecimal("0.10"));
                 config.setWTimeCoin(new BigDecimal("0.15"));
-                break;
-            case "RECOVERY":
-                config.setWDist(new BigDecimal("0.30"));
-                config.setWUrgency(new BigDecimal("0.20"));
-                config.setWCredit(new BigDecimal("0.15"));
-                config.setWTag(new BigDecimal("0.20"));
-                config.setWExpiration(new BigDecimal("0.10"));
-                config.setWStock(new BigDecimal("0.05"));
-                config.setWTimeCoin(new BigDecimal("0.08"));
                 break;
         }
     }
@@ -149,16 +131,11 @@ public class ConfigServiceImpl extends ServiceImpl<ConfigMapper, Config> impleme
     }
 
     private void validateTransition(String from, String to) {
-        boolean valid = switch (from) {
-            case "NORMAL" -> "WARNING_FREEZE".equals(to);
-            case "WARNING_FREEZE" -> "EMERGENCY_RESPONSE".equals(to) || "NORMAL".equals(to);
-            case "EMERGENCY_RESPONSE" -> "RECOVERY".equals(to);
-            case "RECOVERY" -> "NORMAL".equals(to);
-            default -> false;
-        };
-
+        // 双轨双态: NORMAL ↔ EMERGENCY 直接切换
+        boolean valid = ("NORMAL".equals(from) && "EMERGENCY".equals(to))
+                     || ("EMERGENCY".equals(from) && "NORMAL".equals(to));
         if (!valid) {
-            throw new BusinessException("状态机违规: 不允许从 " + from + " 直接跃迁到 " + to);
+            throw new BusinessException("状态机违规: 仅允许 NORMAL ↔ EMERGENCY 直接切换");
         }
     }
 }

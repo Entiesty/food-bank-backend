@@ -11,7 +11,7 @@
         <foreach item="cat" collection="categories" open="(" separator="," close=")">
             #{cat}
         </foreach>
-        <if test="sysMode == 'WARNING_FREEZE'">
+        <if test="sysMode == 'EMERGENCY'">
             AND is_emergency_only = 1
         </if>
     </select>

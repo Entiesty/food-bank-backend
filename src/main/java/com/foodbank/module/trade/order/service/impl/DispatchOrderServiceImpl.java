@@ -288,7 +288,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
 
         // 灾区配给制: 应急模式下检查每日申领配额
         Config config = configService.getCurrentConfig();
-        if ("EMERGENCY_RESPONSE".equals(config.getSysMode()) || "WARNING_FREEZE".equals(config.getSysMode())) {
+        if ("EMERGENCY".equals(config.getSysMode())) {
             checkRationQuota(currentUserId, config);
         }
 
