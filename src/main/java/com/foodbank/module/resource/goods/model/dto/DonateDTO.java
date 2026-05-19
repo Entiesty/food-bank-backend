@@ -39,9 +39,6 @@ public class DonateDTO {
     @Schema(description = "物资特征标签数组")
     private List<String> tags;
 
-    @Schema(description = "定向响应的紧急求救单ID")
-    private Long targetOrderId;
-
     // 🚨 本次新增：抽象物理形态预估
     @NotNull(message = "体积评估不能为空")
     @Schema(description = "体积级别: 1-手提袋, 2-外卖箱, 3-后备箱")

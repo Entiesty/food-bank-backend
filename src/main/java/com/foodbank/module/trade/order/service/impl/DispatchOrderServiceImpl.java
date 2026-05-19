@@ -15,6 +15,7 @@ import com.foodbank.module.system.user.service.IUserService;
 import com.foodbank.module.trade.order.entity.DispatchOrder;
 import com.foodbank.module.trade.order.mapper.DispatchOrderMapper;
 import com.foodbank.module.dispatch.model.dto.DemandPublishDTO;
+import com.foodbank.module.trade.order.model.dto.RespondSosDTO;
 import com.foodbank.module.trade.order.model.vo.AvailableOrderVO;
 import com.foodbank.module.trade.order.service.IDispatchOrderService;
 import com.foodbank.module.trade.task.entity.DeliveryTask;
@@ -124,29 +125,52 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             }
         }
 
-        // 🚀 按志愿者位置综合排序：紧急度 70% + 距离 30%
+        // 🚀 统一 SAW 多因子评分：与抢单大厅 rankOrdersForVolunteer 共用权重体系
         if (currentLon != null && currentLat != null) {
-            list.sort((a, b) -> {
-                double scoreA = mapOrderScore(a, currentLon, currentLat);
-                double scoreB = mapOrderScore(b, currentLon, currentLat);
-                return Double.compare(scoreB, scoreA);
-            });
+            Config cfg = configService.getCurrentConfig();
+            double wDist = cfg.getWDist().doubleValue();
+            double wUrgency = cfg.getWUrgency().doubleValue();
+            double wCredit = cfg.getWCredit().doubleValue();
+            double wTimeCoin = cfg.getWTimeCoin() != null ? cfg.getWTimeCoin().doubleValue() : 0.05;
+
+            // 读取志愿者信用与时间币 (复用上方已声明的 userId)
+            int volCredit = 100;
+            int timeCoin = 0;
+            if (userId != null) {
+                // 如果前面容量过滤已查过，这里直接复用缓存；MyBatis Plus 一级缓存会自动去重
+                User vol = userService.getById(userId);
+                if (vol != null && vol.getCreditScore() != null) volCredit = vol.getCreditScore();
+                if (vol != null && vol.getTimeCoin() != null) timeCoin = vol.getTimeCoin();
+            }
+
+            // 计算接驾距离并找极值
+            double maxDist = 1.0;
+            double minDist = Double.MAX_VALUE;
+            for (DispatchOrder o : list) {
+                if (o.getSourceLon() != null && o.getSourceLat() != null) {
+                    double d = haversine(currentLat, currentLon,
+                            o.getSourceLat().doubleValue(), o.getSourceLon().doubleValue());
+                    o.setMatchScore(d); // 暂存距离用于后续归一化
+                    if (d > maxDist) maxDist = d;
+                    if (d < minDist) minDist = d;
+                } else {
+                    o.setMatchScore(999.0);
+                }
+            }
+            double distRange = Math.max(maxDist - minDist, 1.0);
+            double normCredit = Math.min(volCredit / 150.0, 1.0);
+            double normTimeCoin = Math.min(timeCoin / 50.0, 1.0);
+
+            for (DispatchOrder o : list) {
+                double normDist = (o.getMatchScore() != null && o.getMatchScore() != 999.0)
+                        ? ((maxDist - o.getMatchScore()) / distRange) : 0.0;
+                double normUrgency = (o.getUrgencyLevel() != null ? o.getUrgencyLevel() : 1) / 10.0;
+                o.setMatchScore(normDist * wDist + normUrgency * wUrgency + normCredit * wCredit + normTimeCoin * wTimeCoin);
+            }
+
+            list.sort((a, b) -> Double.compare(b.getMatchScore(), a.getMatchScore()));
         }
         return list;
-    }
-
-    /**
-     * 调度大屏订单综合评分：紧急度归一化(0-1) × 0.7 + 距离归一化(0-1) × 0.3
-     */
-    private double mapOrderScore(DispatchOrder order, Double volLon, Double volLat) {
-        double urgencyNorm = (order.getUrgencyLevel() != null ? order.getUrgencyLevel() : 1) / 10.0;
-        double distNorm = 0.5;
-        if (order.getSourceLon() != null && order.getSourceLat() != null) {
-            double distKm = haversine(volLat, volLon,
-                    order.getSourceLat().doubleValue(), order.getSourceLon().doubleValue());
-            distNorm = Math.max(0.0, 1.0 - distKm / 15.0);
-        }
-        return urgencyNorm * 0.7 + distNorm * 0.3;
     }
 
     /**
@@ -191,6 +215,63 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         Page<DispatchOrder> page = this.page(pageReq, wrapper);
         enrichOrderNames(page.getRecords());
         return page;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void respondToSos(RespondSosDTO dto) {
+        Long merchantId = UserContext.getUserId();
+        if (merchantId == null) throw new BusinessException("商家身份异常，请重新登录");
+
+        User merchant = userService.getById(merchantId);
+        if (merchant == null || merchant.getCurrentLon() == null || merchant.getCurrentLat() == null)
+            throw new BusinessException("请先在个人中心设置店铺坐标");
+
+        // 1. 入库物资
+        com.foodbank.module.resource.goods.entity.Goods goods = new com.foodbank.module.resource.goods.entity.Goods();
+        goods.setMerchantId(merchantId);
+        goods.setGoodsName(dto.getGoodsName());
+        goods.setCategory(dto.getCategory());
+        goods.setStock(dto.getStock());
+        goods.setUnit(dto.getUnit() != null ? dto.getUnit() : "件");
+        goods.setExpirationDate(dto.getExpirationDate());
+        goods.setVolumeLevel(dto.getVolumeLevel() != null ? dto.getVolumeLevel() : 1);
+        goods.setWeightLevel(dto.getWeightLevel() != null ? dto.getWeightLevel() : 1);
+        goods.setGoodsImageUrl(dto.getGoodsImageUrl() != null ? dto.getGoodsImageUrl() : "/img/default.png");
+        goods.setEstimatedValue(dto.getEstimatedValue() != null ? dto.getEstimatedValue() : java.math.BigDecimal.ZERO);
+        goods.setCurrentStationId(null); // P2P 直达，不经过驿站
+        goods.setStatus((byte) 0);
+        goods.setTags("[]");
+
+        com.foodbank.module.resource.goods.service.IGoodsService gs = goodsService;
+        if (!gs.save(goods)) throw new BusinessException("物资入库失败");
+
+        // 2. CAS 乐观锁：在 SOS 订单上直接写入 source_id/goods_id
+        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<DispatchOrder> wrapper =
+            new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<DispatchOrder>()
+                .eq(DispatchOrder::getOrderId, dto.getOrderId())
+                .isNull(DispatchOrder::getSourceId)     // 守卫：只允许第一个响应者
+                .eq(DispatchOrder::getStatus, 0)         // 仅待处理状态
+                .set(DispatchOrder::getSourceId, merchantId)
+                .set(DispatchOrder::getSourceLon, merchant.getCurrentLon())
+                .set(DispatchOrder::getSourceLat, merchant.getCurrentLat())
+                .set(DispatchOrder::getGoodsId, goods.getGoodsId())
+                .set(DispatchOrder::getGoodsName, dto.getGoodsName())
+                .set(DispatchOrder::getGoodsCount, dto.getStock());
+
+        boolean updated = this.update(wrapper);
+        if (!updated) throw new BusinessException("该求助已被其他爱心商家抢先响应");
+
+        // 3. WebSocket 通知受赠方
+        DispatchOrder sos = this.getById(dto.getOrderId());
+        if (sos != null && sos.getDestId() != null) {
+            try {
+                String msg = "{\"type\":\"SOS_RESPONDED\",\"orderSn\":\"" + sos.getOrderSn() + "\",\"msg\":\"您的求救已被响应！物资即将直达！\"}";
+                WebSocketServer.sendMessageToUser(sos.getDestId(), msg);
+            } catch (Exception e) {
+                log.error("推送SOS响应通知失败", e);
+            }
+        }
     }
 
     @Override

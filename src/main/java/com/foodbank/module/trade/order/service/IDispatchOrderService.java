@@ -4,11 +4,13 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.foodbank.module.trade.order.entity.DispatchOrder;
 import com.foodbank.module.dispatch.model.dto.DemandPublishDTO;
+import com.foodbank.module.trade.order.model.dto.RespondSosDTO;
 import com.foodbank.module.trade.order.model.vo.AvailableOrderVO;
 import java.util.List;
 
 public interface IDispatchOrderService extends IService<DispatchOrder> {
     String publishDemandOrder(DemandPublishDTO dto);
+    void respondToSos(RespondSosDTO dto);
     Page<AvailableOrderVO> getAvailableOrderPage(int pageNum, int pageSize);
     void switchOrderToPickup(Long orderId);
     Page<DispatchOrder> getAdminOrderPage(int pageNum, int pageSize, String orderSn, Byte status, Byte deliveryMethod);

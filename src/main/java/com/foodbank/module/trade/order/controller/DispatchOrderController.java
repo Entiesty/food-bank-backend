@@ -36,6 +36,16 @@ public class DispatchOrderController {
         return Result.success(orderService.getPendingOrdersForMap(currentLon, currentLat));
     }
 
+    @Operation(summary = "商家响应紧急求助 (P2P直达)")
+    @PostMapping("/respond-sos")
+    public Result<Void> respondSos(@Validated @RequestBody com.foodbank.module.trade.order.model.dto.RespondSosDTO dto) {
+        Byte role = UserContext.getUserRole();
+        if (role != null && role != 2 && role != 4)
+            throw new com.foodbank.common.exception.BusinessException("越权操作：仅商家或指挥中心可响应SOS");
+        orderService.respondToSos(dto);
+        return Result.success(null, "已成功响应求助，物资将点对点直达受赠方");
+    }
+
     @Operation(summary = "发布物资求助单/自提单")
     @PostMapping("/publish")
     public Result<Map<String, String>> publishDemand(@RequestBody DemandPublishDTO dto) {

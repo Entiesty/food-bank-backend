@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.Version;
 import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -55,6 +56,10 @@ public class DispatchOrder implements Serializable {
     @TableField("status")
     private Byte status;
 
+    @Version
+    @TableField("version")
+    private Integer version;
+
     @TableField("create_time")
     private LocalDateTime createTime;
 
@@ -75,6 +80,9 @@ public class DispatchOrder implements Serializable {
     private BigDecimal sourceLon;
     @TableField(exist = false)
     private BigDecimal sourceLat;
+
+    @TableField(exist = false)
+    private Double matchScore;
 
     @Schema(description = "调度异常原因/滞留标签")
     @TableField("exception_reason")

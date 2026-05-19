@@ -78,63 +78,23 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         goods.setVolumeLevel(dto.getVolumeLevel() != null ? dto.getVolumeLevel() : 1);
         goods.setWeightLevel(dto.getWeightLevel() != null ? dto.getWeightLevel() : 1);
 
-        if (dto.getTargetOrderId() != null) {
-            goods.setCurrentStationId(null);
-            goods.setStatus((byte) 0); // 待取货
-        } else {
-            goods.setCurrentStationId(dto.getCurrentStationId());
-            goods.setStatus((byte) 0);
-            // 僵尸单防御: 指定了驿站但驿站不存在则直接拒绝
-            if (dto.getCurrentStationId() != null) {
-                Station targetStation = stationMapper.selectById(dto.getCurrentStationId());
-                if (targetStation == null) {
-                    throw new BusinessException("所选驿站不存在，请刷新页面后重新选择");
-                }
+        // 纯日常捐赠：物资绑定目标驿站
+        goods.setCurrentStationId(dto.getCurrentStationId());
+        goods.setStatus((byte) 0);
+        if (dto.getCurrentStationId() != null) {
+            Station targetStation = stationMapper.selectById(dto.getCurrentStationId());
+            if (targetStation == null) {
+                throw new BusinessException("所选驿站不存在，请刷新页面后重新选择");
             }
         }
 
         boolean saved = this.save(goods);
         if (!saved) throw new BusinessException("物资入库失败，请稍后重试");
 
-        // 1.5 更新商家CSR统计
+        // 更新商家CSR统计
         updateMerchantCsrStats(merchantId, dto.getStock());
 
-        // 2. 处理 P2P 战时响应逻辑 (缝合求助单)
-        boolean isP2P = false;
-        if (dto.getTargetOrderId() != null) {
-            DispatchOrder targetOrder = dispatchOrderMapper.selectById(dto.getTargetOrderId());
-            if (targetOrder != null && targetOrder.getStatus() == 0) {
-                targetOrder.setGoodsId(goods.getGoodsId());
-                targetOrder.setExceptionReason(null);
-                targetOrder.setStatus((byte) 0);
-
-                User merchant = userMapper.selectById(merchantId);
-                if (merchant != null) {
-                    targetOrder.setSourceLon(merchant.getCurrentLon());
-                    targetOrder.setSourceLat(merchant.getCurrentLat());
-                }
-
-                targetOrder.setSourceId(merchantId);
-                targetOrder.setGoodsName(goods.getGoodsName());
-                targetOrder.setGoodsCount(goods.getStock());
-
-                dispatchOrderMapper.updateById(targetOrder);
-                isP2P = true;
-
-                log.info("🚨 战时响应：商家 {} 已接管求救单 {}！系统转入 P2P 直达模式！", merchantId, targetOrder.getOrderSn());
-
-                if (merchant != null && targetOrder.getDestId() != null) {
-                    try {
-                        String msg = "{\"type\":\"NEW_SOS\", \"orderSn\":\"" + targetOrder.getOrderSn() + "\", \"msg\":\"您的求救信号已被紧急响应！物资即将直达您的位置！\"}";
-                        WebSocketServer.sendMessageToUser(targetOrder.getDestId(), msg);
-                    } catch (Exception e) {
-                        log.error("推送紧急响应弹窗失败", e);
-                    }
-                }
-            }
-        }
-
-        // 3. 生成 DON 单（复式记账）
+        // 生成 DON 单（日常集散模式）
         DispatchOrder order = new DispatchOrder();
         order.setOrderSn("DON-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase());
         order.setOrderType((byte) 1);
@@ -143,45 +103,30 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         order.setGoodsName(dto.getGoodsName());
         order.setGoodsCount(dto.getStock());
         order.setSourceId(merchantId);
+        order.setDestId(dto.getCurrentStationId());
+        order.setDeliveryMethod((byte) 1);
+        order.setStatus((byte) 0);
 
-        if (isP2P) {
-            order.setDestId(null);
-            order.setDeliveryMethod((byte) 1);
-            order.setUrgencyLevel((byte) 5);
-            order.setStatus((byte) 3);
-            order.setExceptionReason("响应紧急广播：定向直供备案");
-        } else {
-            order.setDestId(dto.getCurrentStationId());
-
-            // 🚨 修复 1：发布时就动态接收配送方式
-            // 如果前端没传 deliveryMethod 字段，由于你这是 GoodsServiceImpl 的 dto 里面可能没这个字段，所以暂且默认 1
-            // 真实的自送流转我们在下面的 startSelfDelivery 里做状态跳转
-            order.setDeliveryMethod((byte) 1);
-            order.setStatus((byte) 0);
-
-            byte calculatedUrgency = 1;
-            String cat = dto.getCategory();
-
-            if (cat != null && (cat.contains("生鲜") || cat.contains("冷冻") || cat.contains("乳制品") || cat.contains("烘焙") || cat.contains("速食") || cat.contains("热食"))) {
-                calculatedUrgency = 3;
+        byte calculatedUrgency = 1;
+        String cat = dto.getCategory();
+        if (cat != null && (cat.contains("生鲜") || cat.contains("冷冻") || cat.contains("乳制品") || cat.contains("烘焙") || cat.contains("速食") || cat.contains("热食"))) {
+            calculatedUrgency = 3;
+        }
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        java.time.LocalDateTime expireTime = dto.getExpirationDate();
+        if (expireTime != null && expireTime.isAfter(now)) {
+            long hoursUntilExpire = java.time.Duration.between(now, expireTime).toHours();
+            if (hoursUntilExpire <= 3) {
+                calculatedUrgency = 5;
             }
+        }
+        order.setUrgencyLevel(calculatedUrgency);
 
-            java.time.LocalDateTime now = java.time.LocalDateTime.now();
-            java.time.LocalDateTime expireTime = dto.getExpirationDate();
-            if (expireTime != null && expireTime.isAfter(now)) {
-                long hoursUntilExpire = java.time.Duration.between(now, expireTime).toHours();
-                if (hoursUntilExpire <= 3) {
-                    calculatedUrgency = 5;
-                }
-            }
-            order.setUrgencyLevel(calculatedUrgency);
-
-            if (dto.getCurrentStationId() != null) {
-                Station station = stationMapper.selectById(dto.getCurrentStationId());
-                if (station != null) {
-                    order.setTargetLon(station.getLongitude());
-                    order.setTargetLat(station.getLatitude());
-                }
+        if (dto.getCurrentStationId() != null) {
+            Station station = stationMapper.selectById(dto.getCurrentStationId());
+            if (station != null) {
+                order.setTargetLon(station.getLongitude());
+                order.setTargetLat(station.getLatitude());
             }
         }
         dispatchOrderMapper.insert(order);
