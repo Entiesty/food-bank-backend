@@ -292,6 +292,21 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             checkRationQuota(currentUserId, config);
         }
 
+        // ✅ FIX-2A: 守卫A — 应急模式物理隔离, 禁止自提
+        if ("EMERGENCY".equals(config.getSysMode())
+                && dto.getDeliveryMethod() != null && dto.getDeliveryMethod() == 2) {
+            throw new BusinessException("🚨 应急响应期间严禁市民自行外出，已关闭自提通道，请使用紧急呼救申请上门配送！");
+        }
+
+        // ✅ FIX-2B: 守卫B — 权限对齐, 仅限上门用户禁止自提
+        if (dto.getDeliveryMethod() != null && dto.getDeliveryMethod() == 2) {
+            User currentUser = userService.getById(currentUserId);
+            if (currentUser != null && currentUser.getDeliveryType() != null
+                    && currentUser.getDeliveryType() == 1) {
+                throw new BusinessException("您的档案登记为行动不便，不支持自行前往食物银行取货。");
+            }
+        }
+
         DispatchOrder dispatchOrder = new DispatchOrder();
 
         // 🚨 核心重构：根据紧急度动态分配三轨制业务前缀
@@ -326,13 +341,11 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         dispatchOrder.setDeliveryMethod(dto.getDeliveryMethod() != null ? dto.getDeliveryMethod().byteValue() : (byte) 1);
 
         if (dispatchOrder.getDeliveryMethod() == 2 && dto.getGoodsId() != null) {
-            com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(dto.getGoodsId());
-            if (goods == null || goods.getStock() < 1) {
-                throw new BusinessException("手慢了！该物资已被其他街坊抢空了！");
+            // ✅ FIX-1: 原子乐观锁扣减, 根除超卖
+            boolean success = goodsService.deductStockSafe(dto.getGoodsId(), 1);
+            if (!success) {
+                throw new BusinessException("手慢了！该物资已被抢空！");
             }
-            goods.setStock(goods.getStock() - 1);
-            if (goods.getStock() == 0) goods.setStatus((byte) 3);
-            goodsService.updateById(goods);
 
             String code = String.valueOf((int)((Math.random() * 9 + 1) * 100000));
             dispatchOrder.setPickupCode(code);
