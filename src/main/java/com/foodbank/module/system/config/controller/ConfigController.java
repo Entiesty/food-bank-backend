@@ -7,6 +7,7 @@ import com.foodbank.module.system.config.entity.Config;
 import com.foodbank.module.system.config.model.dto.ConfigUpdateDTO;
 import com.foodbank.module.system.config.model.dto.SwitchModeDTO;
 import com.foodbank.module.system.config.service.IConfigService;
+import com.foodbank.websocket.WebSocketServer;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +50,11 @@ public class ConfigController {
 
         Long operatorId = UserContext.getUserId();
         configService.switchMode(dto.getTargetMode(), operatorId);
+
+        // ✅ FIX-1: 全局WebSocket广播模式切换, 所有在线客户端实时同步
+        String broadcastMsg = "{\"type\":\"MODE_CHANGED\",\"mode\":\"" + dto.getTargetMode() + "\"}";
+        WebSocketServer.broadcast(broadcastMsg);
+
         return Result.success(dto.getTargetMode(), "系统模式已切换至: " + dto.getTargetMode());
     }
 

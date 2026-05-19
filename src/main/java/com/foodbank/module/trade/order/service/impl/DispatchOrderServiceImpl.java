@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.foodbank.common.exception.BusinessException;
+import lombok.extern.slf4j.Slf4j;
 import com.foodbank.common.utils.UserContext;
 import com.foodbank.module.dispatch.strategy.MultiFactorDispatchStrategy;
 import com.foodbank.module.resource.station.entity.Station;
@@ -36,6 +37,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, DispatchOrder> implements IDispatchOrderService {
 
@@ -63,6 +65,10 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
+
+    @Autowired
+    @org.springframework.context.annotation.Lazy
+    private com.foodbank.module.dispatch.service.impl.DispatchEngineServiceImpl dispatchEngineService;
 
     private void enrichOrderNames(List<DispatchOrder> orders) {
         if (orders == null || orders.isEmpty()) return;
@@ -350,6 +356,16 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             WebSocketServer.broadcast(jsonMsg);
         } catch (Exception e) {
             log.error("WebSocket 订单通知广播失败", e);
+        }
+
+        // ✅ FIX-4: SOS紧急订单自动触发LBS雷达广播 (urgency>=8, 无需管理员手动点击)
+        if (dispatchOrder.getUrgencyLevel() != null && dispatchOrder.getUrgencyLevel() >= 8) {
+            try {
+                dispatchEngineService.triggerEmergencyBroadcast(dispatchOrder.getOrderId());
+                log.info("🚨 SOS自动雷达已激活, 单号: {}", dispatchOrder.getOrderSn());
+            } catch (Exception e) {
+                log.error("SOS自动雷达广播失败, 将降级为手动触发", e);
+            }
         }
 
         return dispatchOrder.getPickupCode();
