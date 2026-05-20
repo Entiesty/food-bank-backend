@@ -59,12 +59,15 @@ public class DispatchJob {
 
                     dispatchOrder.setGoodsId(winner.getGoods().getGoodsId());
                     dispatchOrder.setSourceId(winner.getStation().getStationId());
-
-                    // 🚨 核心修复：用真实的物资名称和数量，彻底覆盖掉原始的“急需盒饭”描述！
                     dispatchOrder.setGoodsName(winner.getGoods().getGoodsName());
                     dispatchOrder.setGoodsCount(1);
-
                     orderService.updateById(dispatchOrder);
+                } else {
+                    // 15km内无驿站可匹配此需求, 标记异常让指挥中心知晓
+                    if (dispatchOrder.getExceptionReason() == null) {
+                        dispatchOrder.setExceptionReason("15km内无据点可匹配 [" + dispatchOrder.getRequiredCategory() + "]");
+                        orderService.updateById(dispatchOrder);
+                    }
                 }
             } catch (Exception e) {
                 log.error("❌ [匹配异常] 订单:{} 发生未知错误: ", dispatchOrder.getOrderSn(), e);
@@ -91,18 +94,24 @@ public class DispatchJob {
 
             long minutes = Duration.between(order.getCreateTime(), now).toMinutes();
 
-            // 核心逻辑：去全局物资库查查，老人家要的东西到底还有没有库存？
+            // 大类→子类展开, 与 smartMatchStations 保持一致
+            java.util.List<String> targetCategories = new java.util.ArrayList<>();
+            targetCategories.add(order.getRequiredCategory());
+            String reqCat = order.getRequiredCategory();
+            if ("食品与饮料".equals(reqCat)) targetCategories.addAll(java.util.Arrays.asList("米面粮油", "方便速食", "烘焙糕点", "生鲜果蔬", "冷冻食品", "乳制品", "饮用水", "热食盒饭"));
+            else if ("医疗健康".equals(reqCat)) targetCategories.addAll(java.util.Arrays.asList("常备药品", "外用急救", "医疗器械", "营养补品"));
+            else if ("生活日用".equals(reqCat)) targetCategories.addAll(java.util.Arrays.asList("卫生护理", "防寒保暖", "寝具家纺", "洗漱用品", "纸品耗材"));
+            else if ("应急物资".equals(reqCat)) targetCategories.addAll(java.util.Arrays.asList("应急食品", "应急照明", "防护装备", "保暖物资"));
+
             long stockCount = goodsService.count(new LambdaQueryWrapper<Goods>()
-                    .eq(Goods::getCategory, order.getRequiredCategory())
+                    .in(Goods::getCategory, targetCategories)
                     .eq(Goods::getStatus, 2));
 
             String currentReason = null;
 
-            // 🚨 如果全城都没货了，0分钟直接触发红色警报！
             if (stockCount == 0) {
-                currentReason = "全城据点均无 [" + order.getRequiredCategory() + "] 库存";
+                currentReason = "全城据点均无 [" + order.getRequiredCategory() + "] 类物资库存";
             }
-            // ⚠️ 如果有货，但卡了超过 3 分钟还没志愿者接，说明运力不足
             else if (minutes >= 3) {
                 currentReason = "滞留超过3分钟，周边可能暂无活跃志愿者响应";
             }

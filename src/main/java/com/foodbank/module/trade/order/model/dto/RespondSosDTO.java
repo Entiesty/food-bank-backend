@@ -40,4 +40,6 @@ public class RespondSosDTO {
     private String goodsImageUrl;
 
     private BigDecimal estimatedValue;
+
+    private Boolean isSelfDelivery;
 }

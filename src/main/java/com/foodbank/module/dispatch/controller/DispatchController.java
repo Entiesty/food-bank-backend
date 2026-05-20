@@ -4,6 +4,7 @@ import com.foodbank.common.api.Result;
 import com.foodbank.common.exception.BusinessException;
 import com.foodbank.common.utils.UserContext;
 import com.foodbank.module.trade.order.entity.DispatchOrder;
+import lombok.extern.slf4j.Slf4j;
 import com.foodbank.module.dispatch.model.dto.DemandPublishDTO;
 import com.foodbank.module.dispatch.model.vo.DispatchCandidateVO;
 import com.foodbank.module.dispatch.service.impl.DispatchEngineServiceImpl;
@@ -22,6 +23,7 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 
+@Slf4j
 @Tag(name = "Dispatch Controller", description = "核心智能调度指令接口")
 @RestController
 @RequestMapping("/dispatch")
@@ -107,13 +109,17 @@ public class DispatchController {
         String msg = stringRedisTemplate.opsForValue().get(redisKey);
 
         if (msg != null) {
-            // 🚀 阅后即焚：查到就立马删掉，保证商家只弹窗一次
+            log.info("📡 商家轮询读取广播: key={}, msg={}", redisKey, msg);
             stringRedisTemplate.delete(redisKey);
 
             String[] parts = msg.split("\\|");
             Map<String, String> data = new HashMap<>();
             data.put("category", parts[0]);
             data.put("orderId", parts[1]);
+            if (parts.length > 2) data.put("recipientName", parts[2]);
+            if (parts.length > 3) data.put("recipientTag", parts[3]);
+            if (parts.length > 4) data.put("doorNumber", parts[4]);
+            if (parts.length > 5) data.put("urgency", parts[5]);
             return Result.success(data);
         }
 

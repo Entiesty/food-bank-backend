@@ -59,4 +59,8 @@ public class AvailableOrderVO {
      * 物资体积等级 (1轻量/2标准/3重载) — 前端双维容量过滤
      */
     private Integer volumeLevel;
+
+    private String goodsUnit;
+
+    private Byte orderType;
 }

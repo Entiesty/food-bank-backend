@@ -278,6 +278,31 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                 log.error("推送SOS响应通知失败", e);
             }
         }
+
+        // 4. 🚨 骑手全网红色强推：商户已备好物资，急需骑士接力配送
+        try {
+            String urgentMsg = "{\"type\":\"URGENT_TASK_READY\",\"message\":\"🚨 紧急！周边商户已备好救命物资，急需骑士前往接力配送！\",\"orderId\":\"" + dto.getOrderId() + "\"}";
+            WebSocketServer.broadcast(urgentMsg);
+            log.info("📡 全网骑手强推广播已发送, orderId={}", dto.getOrderId());
+        } catch (Exception e) {
+            log.error("全网骑手强推广播失败, orderId={}", dto.getOrderId(), e);
+        }
+
+        // 5. 🚀 商家自配送分支：商户自己送，跳过骑手抢单
+        if (dto.getIsSelfDelivery() != null && dto.getIsSelfDelivery()) {
+            this.update(new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<DispatchOrder>()
+                    .eq(DispatchOrder::getOrderId, dto.getOrderId())
+                    .eq(DispatchOrder::getStatus, 0)
+                    .set(DispatchOrder::getStatus, 1));
+
+            DeliveryTask task = new DeliveryTask();
+            task.setOrderId(dto.getOrderId());
+            task.setVolunteerId(merchantId);
+            task.setTaskStatus((byte) 1);
+            task.setVersion(0);
+            taskService.save(task);
+            log.info("🚀 商家自配送模式已激活, orderId={}, merchantId={}", dto.getOrderId(), merchantId);
+        }
     }
 
     @Override
@@ -465,11 +490,12 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     if (targetLat == null) targetLat = recipient.getCurrentLat();
                 }
             }
-            // 查询物资双维等级供前端容量校验
+            // 查询物资双维等级 + 单位供前端展示
             int wl = 1, vl = 1;
+            String unit = "份";
             if (order.getGoodsId() != null) {
                 com.foodbank.module.resource.goods.entity.Goods g = goodsService.getById(order.getGoodsId());
-                if (g != null) { wl = g.getWeightLevel(); vl = g.getVolumeLevel(); }
+                if (g != null) { wl = g.getWeightLevel(); vl = g.getVolumeLevel(); unit = g.getUnit() != null ? g.getUnit() : "份"; }
             }
             return AvailableOrderVO.builder()
                     .orderId(order.getOrderId()).orderSn(order.getOrderSn())
@@ -478,7 +504,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     .sourceName(sourceName).sourceAddress(sourceAddress).sourceLon(sourceLon).sourceLat(sourceLat)
                     .targetName(targetName).targetAddress(targetAddress).targetLon(targetLon).targetLat(targetLat)
                     .createTime(order.getCreateTime())
-                    .weightLevel(wl).volumeLevel(vl).build();
+                    .weightLevel(wl).volumeLevel(vl).goodsUnit(unit).orderType(order.getOrderType()).build();
         }).collect(Collectors.toList());
 
         if (volunteer != null) {

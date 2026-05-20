@@ -149,8 +149,9 @@ public class DispatchEngineServiceImpl {
                 Long stationId = Long.parseLong(result.getContent().getName());
 
                 List<Goods> stationGoodsList = goodsMapper.selectAvailableGoodsByStation(stationId, targetCategories, sysMode);
-                Goods bestMatchedGoods = null;
-                double maxTagScore = -1.0;
+                if (stationGoodsList.isEmpty()) continue;
+                Goods bestMatchedGoods = stationGoodsList.get(0);
+                double maxTagScore = 0.0;
 
                 for (Goods goods : stationGoodsList) {
                     double currentTagScore = calculateTagScore(hasTagRequirement, reqTags, goods.getTags());
@@ -159,8 +160,7 @@ public class DispatchEngineServiceImpl {
                         bestMatchedGoods = goods;
                     }
                 }
-
-                if (bestMatchedGoods == null) continue;
+                // 品类已匹配, 标签匹配为加分项, 不因标签不匹配而丢弃结果
                 Station station = stationService.getById(stationId);
                 if (station == null) continue;
 
@@ -349,15 +349,29 @@ public class DispatchEngineServiceImpl {
             targetMerchants = list3km; result.put("radius", 3); result.put("isDegraded", false);
         } else if (!list10km.isEmpty()) {
             targetMerchants = list10km; result.put("radius", 10); result.put("isDegraded", true);
+        } else if (!allMerchants.isEmpty()) {
+            // 🚨 全城终极广播兜底：无视距离，向全城所有爱心商铺发射信号
+            targetMerchants = allMerchants; result.put("radius", -1); result.put("isDegraded", true);
+            log.warn("📡 全城终极广播兜底已激活！10km内无商铺响应，已将搜索半径扩大至全城 ({} 家商铺)", allMerchants.size());
         } else {
             // 失败也需手动释放防抖锁，否则要等 30 秒
             stringRedisTemplate.delete(lockKey);
-            throw new BusinessException("终极熔断：扩大至全城 10 公里均无商铺响应！");
+            throw new BusinessException("终极熔断：全城暂无可用爱心商铺资源");
         }
+
+        // 查求助人信息
+        User recipient = userService.getById(order.getDestId());
+        String recipientName = recipient != null ? recipient.getUsername() : "未知";
+        String recipientTag = recipient != null && recipient.getUserTag() != null ? recipient.getUserTag() : "";
+        String doorNumber = recipient != null && recipient.getDoorNumber() != null ? recipient.getDoorNumber() : "";
+        String urgency = String.valueOf(order.getUrgencyLevel() != null ? order.getUrgencyLevel() : 1);
 
         for (User m : targetMerchants) {
             String redisKey = "EMERGENCY_BCAST:" + m.getUserId();
-            stringRedisTemplate.opsForValue().set(redisKey, order.getRequiredCategory() + "|" + order.getOrderId(), 60, TimeUnit.SECONDS);
+            String msg = order.getRequiredCategory() + "|" + order.getOrderId() + "|"
+                       + recipientName + "|" + recipientTag + "|" + doorNumber + "|" + urgency;
+            log.info("📡 紧急广播写入 Redis: key={}, msg={}", redisKey, msg);
+            stringRedisTemplate.opsForValue().set(redisKey, msg, 60, TimeUnit.SECONDS);
         }
 
         result.put("notifiedCount", targetMerchants.size());

@@ -13,9 +13,7 @@
         <foreach item="cat" collection="categories" open="(" separator="," close=")">
             #{cat}
         </foreach>
-        <if test="sysMode == 'EMERGENCY'">
-            AND g.is_emergency_only = 1
-        </if>
+        <!-- EMERGENCY 模式全量物资可用, 不再过滤 -->
     </select>
 
 </mapper>

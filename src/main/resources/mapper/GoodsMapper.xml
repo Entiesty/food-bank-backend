@@ -11,9 +11,7 @@
         <foreach item="cat" collection="categories" open="(" separator="," close=")">
             #{cat}
         </foreach>
-        <if test="sysMode == 'EMERGENCY'">
-            AND is_emergency_only = 1
-        </if>
+        <!-- EMERGENCY 模式全量物资可用, 不再过滤 is_emergency_only -->
     </select>
 
     <select id="getMerchantTotalValue" resultType="java.math.BigDecimal">
