@@ -62,7 +62,7 @@ public class UserController {
             updateWrapper.set(User::getIsVerified, (byte) 0);
         }
 
-        // 3. 志愿者专属字段：运力载具
+        // 3. 志愿者专属字段：运力载具 (自由切换，无需重新审核)
         if (dto.getVehicleType() != null) {
             updateWrapper.set(User::getVehicleType, dto.getVehicleType());
         }

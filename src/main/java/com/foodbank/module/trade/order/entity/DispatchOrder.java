@@ -76,9 +76,10 @@ public class DispatchOrder implements Serializable {
     @TableField(exist = false)
     private String targetName;
 
-    @TableField(exist = false)
+    @TableField("source_lon")
     private BigDecimal sourceLon;
-    @TableField(exist = false)
+
+    @TableField("source_lat")
     private BigDecimal sourceLat;
 
     @TableField(exist = false)

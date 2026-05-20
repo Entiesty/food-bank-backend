@@ -35,6 +35,9 @@ public class DispatchJob {
     @Autowired
     private IGoodsService goodsService;
 
+    @Autowired
+    private com.foodbank.module.system.config.service.IConfigService configService;
+
     /**
      * 1. 自动撮合引擎：每隔 5 秒执行一次扫描
      */
@@ -63,8 +66,9 @@ public class DispatchJob {
                     dispatchOrder.setGoodsCount(1);
                     orderService.updateById(dispatchOrder);
                 } else {
-                    // 15km内无驿站可匹配此需求, 标记异常让指挥中心知晓
-                    if (dispatchOrder.getExceptionReason() == null) {
+                    // 仅在应急模式下标记异常，平时模式静默等待补货
+                    com.foodbank.module.system.config.entity.Config cfg = configService.getCurrentConfig();
+                    if ("EMERGENCY".equals(cfg.getSysMode()) && dispatchOrder.getExceptionReason() == null) {
                         dispatchOrder.setExceptionReason("15km内无据点可匹配 [" + dispatchOrder.getRequiredCategory() + "]");
                         orderService.updateById(dispatchOrder);
                     }
@@ -80,6 +84,10 @@ public class DispatchJob {
      */
     @Scheduled(cron = "0 * * * * ?")
     public void monitorExceptionOrders() {
+        // 平时模式不产生异常订单，直接跳过
+        com.foodbank.module.system.config.entity.Config cfg = configService.getCurrentConfig();
+        if (!"EMERGENCY".equals(cfg.getSysMode())) return;
+
         // 只查还没匹配出去的求助单
         List<DispatchOrder> pendingOrders = orderService.list(new LambdaQueryWrapper<DispatchOrder>()
                 .eq(DispatchOrder::getStatus, 0)
@@ -94,15 +102,8 @@ public class DispatchJob {
 
             long minutes = Duration.between(order.getCreateTime(), now).toMinutes();
 
-            // 大类→子类展开, 与 smartMatchStations 保持一致
-            java.util.List<String> targetCategories = new java.util.ArrayList<>();
-            targetCategories.add(order.getRequiredCategory());
-            String reqCat = order.getRequiredCategory();
-            if ("食品与饮料".equals(reqCat)) targetCategories.addAll(java.util.Arrays.asList("米面粮油", "方便速食", "烘焙糕点", "生鲜果蔬", "冷冻食品", "乳制品", "饮用水", "热食盒饭"));
-            else if ("医疗健康".equals(reqCat)) targetCategories.addAll(java.util.Arrays.asList("常备药品", "外用急救", "医疗器械", "营养补品"));
-            else if ("生活日用".equals(reqCat)) targetCategories.addAll(java.util.Arrays.asList("卫生护理", "防寒保暖", "寝具家纺", "洗漱用品", "纸品耗材"));
-            else if ("应急物资".equals(reqCat)) targetCategories.addAll(java.util.Arrays.asList("应急食品", "应急照明", "防护装备", "保暖物资"));
-
+            // 大类→子类展开, 通过 CategoryHierarchy 枚举统一管理
+            java.util.List<String> targetCategories = com.foodbank.module.resource.goods.model.CategoryHierarchy.expand(order.getRequiredCategory());
             long stockCount = goodsService.count(new LambdaQueryWrapper<Goods>()
                     .in(Goods::getCategory, targetCategories)
                     .eq(Goods::getStatus, 2));

@@ -7,7 +7,9 @@ import com.foodbank.module.system.user.entity.User;
 import com.foodbank.module.system.user.mapper.UserMapper;
 import com.foodbank.module.system.user.model.vo.UserDashboardVO;
 import com.foodbank.module.system.user.service.IUserService;
+import com.foodbank.websocket.WebSocketServer;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +25,7 @@ import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
 
+@Slf4j
 @Service
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IUserService {
 
@@ -74,7 +77,20 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             user.setIsVerified((byte) 0);
             user.setIdentityProofUrl(null);
         }
-        return this.updateById(user);
+        boolean ok = this.updateById(user);
+
+        // 🚀 实时通知用户审核结果 (WebSocket 推送)
+        try {
+            String msg = isPass
+                ? "{\"type\":\"AUDIT_PASSED\",\"message\":\"恭喜！您的资质已通过指挥中心审核，全部调度功能已解锁！\"}"
+                : "{\"type\":\"AUDIT_REJECTED\",\"message\":\"您的资质审核未通过，请重新上传凭证。\"}";
+            WebSocketServer.sendMessageToUser(userId, msg);
+            log.info("📡 审核结果已推送至用户 {}, result={}", userId, isPass ? "通过" : "驳回");
+        } catch (Exception e) {
+            log.warn("审核结果推送失败(非致命): {}", e.getMessage());
+        }
+
+        return ok;
     }
 
     @Override

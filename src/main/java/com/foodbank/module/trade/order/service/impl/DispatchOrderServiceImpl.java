@@ -279,13 +279,34 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             }
         }
 
-        // 4. 🚨 骑手全网红色强推：商户已备好物资，急需骑士接力配送
+        // 4. 🚨 骑手全网红色强推：商户已备好物资，急需骑士接力配送 (带物資体量信息)
         try {
-            String urgentMsg = "{\"type\":\"URGENT_TASK_READY\",\"message\":\"🚨 紧急！周边商户已备好救命物资，急需骑士前往接力配送！\",\"orderId\":\"" + dto.getOrderId() + "\"}";
+            int wl = dto.getWeightLevel() != null ? dto.getWeightLevel() : 1;
+            int vl = dto.getVolumeLevel() != null ? dto.getVolumeLevel() : 1;
+            String[] weightLabels = {"", "轻量<5kg", "标准5-20kg", "重载>20kg"};
+            String[] volumeLabels = {"", "小件", "中件", "大件"};
+            String cargoInfo = weightLabels[Math.min(wl, 3)] + " · " + volumeLabels[Math.min(vl, 3)];
+            String urgentMsg = "{\"type\":\"URGENT_TASK_READY\"," +
+                "\"message\":\"🚨 紧急！周边商户已备好救命物资，急需骑士前往接力配送！\"," +
+                "\"orderId\":\"" + dto.getOrderId() + "\"," +
+                "\"cargoInfo\":\"" + cargoInfo + "\"," +
+                "\"weightLevel\":" + wl + "," +
+                "\"volumeLevel\":" + vl + "}";
             WebSocketServer.broadcast(urgentMsg);
-            log.info("📡 全网骑手强推广播已发送, orderId={}", dto.getOrderId());
+            log.info("📡 全网骑手强推广播已发送, orderId={}, cargo={}", dto.getOrderId(), cargoInfo);
         } catch (Exception e) {
             log.error("全网骑手强推广播失败, orderId={}", dto.getOrderId(), e);
+        }
+
+        // 4.5 🧹 商家成功接单后，清除该 orderId 的所有广播，防止其他商家重复看到
+        try {
+            java.util.Set<String> broadcastKeys = stringRedisTemplate.keys("EMERGENCY_BCAST:*:" + dto.getOrderId());
+            if (broadcastKeys != null && !broadcastKeys.isEmpty()) {
+                stringRedisTemplate.delete(broadcastKeys);
+                log.info("🧹 订单 {} 已被商家 {} 响应，已清除 {} 条关联广播", dto.getOrderId(), merchantId, broadcastKeys.size());
+            }
+        } catch (Exception e) {
+            log.warn("清除广播缓存异常(非致命)", e);
         }
 
         // 5. 🚀 商家自配送分支：商户自己送，跳过骑手抢单
@@ -321,6 +342,64 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         if ("EMERGENCY".equals(config.getSysMode())
                 && dto.getDeliveryMethod() != null && dto.getDeliveryMethod() == 2) {
             throw new BusinessException("🚨 应急响应期间严禁市民自行外出，已关闭自提通道，请使用紧急呼救申请上门配送！");
+        }
+
+        // ✅ 守卫A2: 平时模式下预约上门配送 → 需验证15km内有库存，无货或距离太远则友好拒绝
+        // 暂存最近驿站匹配结果 (在空间校验中填充，订单创建时消费)
+        Long matchedStationId = null;
+        Long matchedGoodsId = null;
+        String matchedGoodsName = null;
+        if (!"EMERGENCY".equals(config.getSysMode())
+                && (dto.getDeliveryMethod() == null || dto.getDeliveryMethod() == 1)) {
+            java.util.List<String> checkCats = com.foodbank.module.resource.goods.model.CategoryHierarchy.expand(dto.getRequiredCategory());
+
+            // 全局快速短路：全城一粒库存都没有 → 直接拒绝
+            long totalAvailable = goodsService.count(new LambdaQueryWrapper<com.foodbank.module.resource.goods.entity.Goods>()
+                    .in(com.foodbank.module.resource.goods.entity.Goods::getCategory, checkCats)
+                    .eq(com.foodbank.module.resource.goods.entity.Goods::getStatus, 2)
+                    .gt(com.foodbank.module.resource.goods.entity.Goods::getStock, 0));
+            if (totalAvailable == 0) {
+                throw new BusinessException("当前为平时模式，全城暂无 [" + dto.getRequiredCategory() + "] 类物资库存。建议前往「食物银行公益超市」选择已有物资自提，或等待爱心商家补货后重试。");
+            }
+
+            // 空间邻近校验 + 自动匹配最近驿站物资：找到 15km 内最近的据点并锁定物资
+            if (dto.getTargetLon() != null && dto.getTargetLat() != null) {
+                java.math.BigDecimal reqLon = dto.getTargetLon();
+                java.math.BigDecimal reqLat = dto.getTargetLat();
+                // 1. 一次查询拉取所有匹配物资
+                java.util.List<com.foodbank.module.resource.goods.entity.Goods> nearbyCandidates = goodsService.list(
+                    new LambdaQueryWrapper<com.foodbank.module.resource.goods.entity.Goods>()
+                        .in(com.foodbank.module.resource.goods.entity.Goods::getCategory, checkCats)
+                        .eq(com.foodbank.module.resource.goods.entity.Goods::getStatus, 2)
+                        .gt(com.foodbank.module.resource.goods.entity.Goods::getStock, 0));
+                // 2. 聚合去重 stationId 后批量加载驿站 (消除 N+1)
+                java.util.Set<Long> stationIds = nearbyCandidates.stream()
+                        .map(com.foodbank.module.resource.goods.entity.Goods::getCurrentStationId)
+                        .filter(id -> id != null)
+                        .collect(Collectors.toSet());
+                java.util.Map<Long, com.foodbank.module.resource.station.entity.Station> stationMap = new java.util.HashMap<>();
+                if (!stationIds.isEmpty()) {
+                    stationService.listByIds(stationIds).forEach(st -> stationMap.put(st.getStationId(), st));
+                }
+                // 3. 内存计算找到距离受赠方最近的驿站+物资，同时完成 15km 校验
+                double bestDist = Double.MAX_VALUE;
+                for (com.foodbank.module.resource.goods.entity.Goods g : nearbyCandidates) {
+                    if (g.getCurrentStationId() == null) continue;
+                    com.foodbank.module.resource.station.entity.Station st = stationMap.get(g.getCurrentStationId());
+                    if (st == null || st.getLongitude() == null || st.getLatitude() == null) continue;
+                    double dist = haversine(reqLat.doubleValue(), reqLon.doubleValue(),
+                                            st.getLatitude().doubleValue(), st.getLongitude().doubleValue());
+                    if (dist <= 15.0 && dist < bestDist) {
+                        bestDist = dist;
+                        matchedStationId = st.getStationId();
+                        matchedGoodsId = g.getGoodsId();
+                        matchedGoodsName = g.getGoodsName();
+                    }
+                }
+                if (matchedStationId == null) {
+                    throw new BusinessException("当前为平时模式， [" + dto.getRequiredCategory() + "] 类物资最近的据点也在 15km 以外。建议前往「食物银行公益超市」选择已有物资自提，或等待爱心商家补货后重试。");
+                }
+            }
         }
 
         // ✅ FIX-2B: 守卫B — 权限对齐, 仅限上门用户禁止自提
@@ -366,7 +445,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         dispatchOrder.setDeliveryMethod(dto.getDeliveryMethod() != null ? dto.getDeliveryMethod().byteValue() : (byte) 1);
 
         if (dispatchOrder.getDeliveryMethod() == 2 && dto.getGoodsId() != null) {
-            // ✅ FIX-1: 原子乐观锁扣减, 根除超卖
+            // 自提: 原子乐观锁扣减, 锁定指定物资
             boolean success = goodsService.deductStockSafe(dto.getGoodsId(), 1);
             if (!success) {
                 throw new BusinessException("手慢了！该物资已被抢空！");
@@ -377,13 +456,25 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             dispatchOrder.setGoodsId(dto.getGoodsId());
             dispatchOrder.setSourceId(dto.getSourceId());
             dispatchOrder.setStatus((byte) 1);
-        } else {
+            dispatchOrder.setGoodsName(dto.getDescription() != null ? dto.getDescription() : dto.getRequiredCategory());
+            dispatchOrder.setGoodsCount(1);
+        } else if (matchedStationId != null) {
+            // 平时模式 + 预约上门配送: 自动匹配最近驿站物资, 原子扣减库存
+            boolean success = goodsService.deductStockSafe(matchedGoodsId, 1);
+            if (!success) {
+                throw new BusinessException("手慢了！该物资已被抢空，请重新提交求助。");
+            }
+            dispatchOrder.setSourceId(matchedStationId);
+            dispatchOrder.setGoodsId(matchedGoodsId);
+            dispatchOrder.setGoodsName(matchedGoodsName);
+            dispatchOrder.setGoodsCount(1);
             dispatchOrder.setStatus((byte) 0);
+        } else {
+            // 应急模式或无匹配: 待商家响应
+            dispatchOrder.setStatus((byte) 0);
+            dispatchOrder.setGoodsName("急需：" + (dto.getDescription() != null ? dto.getDescription() : dto.getRequiredCategory()));
+            dispatchOrder.setGoodsCount(1);
         }
-
-        String specificName = dto.getDescription() != null ? dto.getDescription() : dto.getRequiredCategory();
-        dispatchOrder.setGoodsName("急需：" + specificName);
-        dispatchOrder.setGoodsCount(1);
 
         boolean saved = this.save(dispatchOrder);
         if (!saved) throw new BusinessException("求助发布失败，请稍后重试");
@@ -573,6 +664,29 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             WebSocketServer.broadcast(jsonMsg);
         } catch (Exception e) {
             log.error("取消订单 WebSocket 广播失败 orderId=" + orderId, e);
+        }
+
+        // 【定向通知受赠方】告知求助已被指挥中心撤销
+        if (order.getDestId() != null) {
+            try {
+                String cancelMsg = "{\"type\":\"ORDER_CANCELLED\",\"orderId\":" + orderId
+                        + ",\"orderSn\":\"" + order.getOrderSn() + "\""
+                        + ",\"message\":\"您的紧急求助已被指挥中心撤销，如有需要请重新发布。\"}";
+                WebSocketServer.sendMessageToUser(order.getDestId(), cancelMsg);
+            } catch (Exception e) {
+                log.error("通知受赠方订单取消失败 destId={}", order.getDestId(), e);
+            }
+        }
+
+        // 【清理紧急广播】订单已取消，清除所有商家的 Redis 广播缓存
+        try {
+            java.util.Set<String> broadcastKeys = stringRedisTemplate.keys("EMERGENCY_BCAST:*:" + orderId);
+            if (broadcastKeys != null && !broadcastKeys.isEmpty()) {
+                stringRedisTemplate.delete(broadcastKeys);
+                log.info("🧹 订单 {} 已取消，已清除 {} 条紧急广播缓存", orderId, broadcastKeys.size());
+            }
+        } catch (Exception e) {
+            log.warn("清除紧急广播缓存异常(非致命) orderId={}", orderId, e);
         }
     }
 

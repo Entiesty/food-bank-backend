@@ -98,32 +98,41 @@ public class DispatchController {
         return Result.success(response);
     }
 
-    // 🚨 新增：商家轮询接收广播接口 (阅后即焚机制)
-    @Operation(summary = "商家轮询接收紧急广播", description = "获取后立刻从Redis中删除该消息，防止重复弹窗")
+    // 🚨 持久化广播：商家轮询获取所有未处理的紧急广播列表 (不再阅后即焚)
+    @Operation(summary = "商家轮询接收紧急广播列表", description = "持久化广播，仅商家成功接单后才清除对应orderId")
     @GetMapping("/emergency/my-broadcast")
-    public Result<Map<String, String>> checkMyBroadcast() {
-        Long myUserId = UserContext.getUserId(); // 获取当前登录的商家ID
-        String redisKey = "EMERGENCY_BCAST:" + myUserId;
-
-        // 去 Redis 查有没有指挥中心发给我的消息
-        String msg = stringRedisTemplate.opsForValue().get(redisKey);
-
-        if (msg != null) {
-            log.info("📡 商家轮询读取广播: key={}, msg={}", redisKey, msg);
-            stringRedisTemplate.delete(redisKey);
-
-            String[] parts = msg.split("\\|");
-            Map<String, String> data = new HashMap<>();
-            data.put("category", parts[0]);
-            data.put("orderId", parts[1]);
-            if (parts.length > 2) data.put("recipientName", parts[2]);
-            if (parts.length > 3) data.put("recipientTag", parts[3]);
-            if (parts.length > 4) data.put("doorNumber", parts[4]);
-            if (parts.length > 5) data.put("urgency", parts[5]);
-            return Result.success(data);
+    public Result<java.util.List<Map<String, String>>> checkMyBroadcast() {
+        // 平时态不返回紧急广播，前端雷达页处于休眠状态
+        String sysMode = dispatchOrderService.getCurrentSystemMode();
+        if (!"EMERGENCY".equals(sysMode)) {
+            return Result.success(new java.util.ArrayList<>());
         }
 
-        // 没消息就返回 null，前端静默不处理
-        return Result.success(null);
+        Long myUserId = UserContext.getUserId();
+        String pattern = "EMERGENCY_BCAST:" + myUserId + ":*";
+
+        java.util.Set<String> keys = stringRedisTemplate.keys(pattern);
+        java.util.List<Map<String, String>> list = new java.util.ArrayList<>();
+
+        if (keys != null && !keys.isEmpty()) {
+            for (String key : keys) {
+                String msg = stringRedisTemplate.opsForValue().get(key);
+                if (msg == null) continue;
+                String[] parts = msg.split("\\|");
+                Map<String, String> data = new HashMap<>();
+                data.put("category", parts[0]);
+                data.put("orderId", parts[1]);
+                if (parts.length > 2) data.put("recipientName", parts[2]);
+                if (parts.length > 3) data.put("recipientTag", parts[3]);
+                if (parts.length > 4) data.put("doorNumber", parts[4]);
+                if (parts.length > 5) data.put("urgency", parts[5]);
+                if (parts.length > 6) data.put("lon", parts[6]);
+                if (parts.length > 7) data.put("lat", parts[7]);
+                list.add(data);
+            }
+            log.info("📡 商家 {} 轮询拉取到 {} 条紧急广播", myUserId, list.size());
+        }
+
+        return Result.success(list);
     }
 }

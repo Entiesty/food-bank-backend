@@ -9,10 +9,12 @@
         AND o.status = 0
         AND o.dest_id IS NULL
         AND g.stock > 0
-        AND g.category IN
-        <foreach item="cat" collection="categories" open="(" separator="," close=")">
-            #{cat}
-        </foreach>
+        <if test="categories != null and categories.size() > 0">
+            AND g.category IN
+            <foreach item="cat" collection="categories" open="(" separator="," close=")">
+                #{cat}
+            </foreach>
+        </if>
         <!-- EMERGENCY 模式全量物资可用, 不再过滤 -->
     </select>
 

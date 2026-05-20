@@ -67,6 +67,10 @@ public class DispatchEngineServiceImpl {
     @Autowired
     private RabbitTemplate rabbitTemplate;
 
+    public String getCurrentSystemMode() {
+        return configService.getCurrentConfig().getSysMode();
+    }
+
     public List<DispatchCandidateVO> smartMatchStations(DispatchOrder dispatchOrder) {
         log.info("📡 启动智能派单匹配，坐标:[{},{}], 需求大类:{}, 需求标签:{}",
                 dispatchOrder.getTargetLon(), dispatchOrder.getTargetLat(),
@@ -75,15 +79,8 @@ public class DispatchEngineServiceImpl {
         String sysMode = configService.getCurrentConfig().getSysMode();
         log.info("【应急模式感知】 当前系统模式: {}", sysMode);
 
-        // 1. 领域大类映射 (Domain Mapping) — V6: 对齐前端四大分类体系
-        List<String> targetCategories = new ArrayList<>();
-        targetCategories.add(dispatchOrder.getRequiredCategory());
-        String reqCat = dispatchOrder.getRequiredCategory();
-
-        if ("食品与饮料".equals(reqCat)) targetCategories.addAll(Arrays.asList("米面粮油", "方便速食", "烘焙糕点", "生鲜果蔬", "冷冻食品", "乳制品", "饮用水", "热食盒饭"));
-        else if ("医疗健康".equals(reqCat)) targetCategories.addAll(Arrays.asList("常备药品", "外用急救", "医疗器械", "营养补品"));
-        else if ("生活日用".equals(reqCat)) targetCategories.addAll(Arrays.asList("卫生护理", "防寒保暖", "寝具家纺", "洗漱用品", "纸品耗材"));
-        else if ("应急物资".equals(reqCat)) targetCategories.addAll(Arrays.asList("应急食品", "应急照明", "防护装备", "保暖物资"));
+        // 1. 领域大类映射 (Domain Mapping) — 通过 CategoryHierarchy 枚举统一管理
+        List<String> targetCategories = com.foodbank.module.resource.goods.model.CategoryHierarchy.expand(dispatchOrder.getRequiredCategory());
 
         // 解析并清洗 JSON 格式的标签
         List<String> reqTags = new ArrayList<>();
@@ -365,13 +362,17 @@ public class DispatchEngineServiceImpl {
         String recipientTag = recipient != null && recipient.getUserTag() != null ? recipient.getUserTag() : "";
         String doorNumber = recipient != null && recipient.getDoorNumber() != null ? recipient.getDoorNumber() : "";
         String urgency = String.valueOf(order.getUrgencyLevel() != null ? order.getUrgencyLevel() : 1);
+        String recipientLon = recipient != null && recipient.getCurrentLon() != null ? recipient.getCurrentLon().toString() : "";
+        String recipientLat = recipient != null && recipient.getCurrentLat() != null ? recipient.getCurrentLat().toString() : "";
 
         for (User m : targetMerchants) {
-            String redisKey = "EMERGENCY_BCAST:" + m.getUserId();
+            // 持久化广播: 按 userId + orderId 分键, 支持多订单共存, TTL 2 小时
+            String redisKey = "EMERGENCY_BCAST:" + m.getUserId() + ":" + orderId;
             String msg = order.getRequiredCategory() + "|" + order.getOrderId() + "|"
-                       + recipientName + "|" + recipientTag + "|" + doorNumber + "|" + urgency;
+                       + recipientName + "|" + recipientTag + "|" + doorNumber + "|" + urgency + "|"
+                       + recipientLon + "|" + recipientLat;
             log.info("📡 紧急广播写入 Redis: key={}, msg={}", redisKey, msg);
-            stringRedisTemplate.opsForValue().set(redisKey, msg, 60, TimeUnit.SECONDS);
+            stringRedisTemplate.opsForValue().set(redisKey, msg, 2, TimeUnit.HOURS);
         }
 
         result.put("notifiedCount", targetMerchants.size());
