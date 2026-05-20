@@ -427,18 +427,6 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         dispatchOrder.setDestId(currentUserId);
         dispatchOrder.setRequiredCategory(dto.getRequiredCategory());
 
-        if (dto.getRequiredTags() != null && !dto.getRequiredTags().isEmpty()) {
-            try {
-                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                String jsonTags = mapper.writeValueAsString(dto.getRequiredTags());
-                dispatchOrder.setRequiredTags(jsonTags);
-            } catch (Exception e) {
-                dispatchOrder.setRequiredTags("[]");
-            }
-        } else {
-            dispatchOrder.setRequiredTags("[]");
-        }
-
         dispatchOrder.setUrgencyLevel(dto.getUrgencyLevel() != null ? dto.getUrgencyLevel().byteValue() : 1);
         dispatchOrder.setTargetLon(dto.getTargetLon());
         dispatchOrder.setTargetLat(dto.getTargetLat());
