@@ -61,7 +61,9 @@ public class DashboardController {
 
         // 指标 3：全网可用物资总库存 (状态为 2:已入库)
         QueryWrapper<Goods> stockQuery = new QueryWrapper<>();
-        stockQuery.select("IFNULL(SUM(stock), 0) as totalStock").eq("status", 2);
+        stockQuery.select("IFNULL(SUM(stock), 0) as totalStock")
+                .eq("status", 2)
+                .isNotNull("current_station_id");  // 排除 P2P 直达物资，仅统计驿站库存
         Map<String, Object> stockResult = goodsService.getMap(stockQuery);
         long totalStock = stockResult != null ? Long.parseLong(stockResult.get("totalStock").toString()) : 0;
 
@@ -80,6 +82,7 @@ public class DashboardController {
         QueryWrapper<Goods> queryWrapper = new QueryWrapper<>();
         queryWrapper.select("category as categoryName, SUM(stock) as totalStock")
                 .eq("status", 2)
+                .isNotNull("current_station_id")  // 排除 P2P 直达物资
                 .groupBy("category")
                 .having("SUM(stock) > 0");
 
