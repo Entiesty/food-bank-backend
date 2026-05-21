@@ -32,6 +32,20 @@ public class WebSocketServer {
         log.error("WebSocket 发生错误", error);
     }
 
+    /**
+     * 接收前端心跳 Ping，回复 Pong 防止防火墙/NAT 静默断连
+     */
+    @OnMessage
+    public void onMessage(String message, Session session) {
+        if (message != null && message.contains("\"type\":\"PING\"")) {
+            try {
+                session.getBasicRemote().sendText("{\"type\":\"PONG\"}");
+            } catch (Exception e) {
+                log.error("回复心跳失败", e);
+            }
+        }
+    }
+
     // 🚀 核心大招：向指定求助者定向发射弹窗信号！
     public static void sendMessageToUser(Long userId, String message) {
         Session session = sessionMap.get(userId);

@@ -45,11 +45,7 @@ public class MerchantController {
                 .sum();
 
         BigDecimal totalValue = allGoods.stream()
-                .map(g -> {
-                    BigDecimal val = g.getEstimatedValue() != null ? g.getEstimatedValue() : BigDecimal.ZERO;
-                    int stock = g.getStock() != null ? g.getStock() : 0;
-                    return val.multiply(BigDecimal.valueOf(stock));
-                })
+                .map(g -> g.getEstimatedValue() != null ? g.getEstimatedValue() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         // 统计受助人数: 通过该商家的物资被配送到的受赠方数量

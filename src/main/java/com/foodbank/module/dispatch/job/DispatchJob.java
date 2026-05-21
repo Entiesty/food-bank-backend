@@ -69,7 +69,7 @@ public class DispatchJob {
                     // 仅在应急模式下标记异常，平时模式静默等待补货
                     com.foodbank.module.system.config.entity.Config cfg = configService.getCurrentConfig();
                     if ("EMERGENCY".equals(cfg.getSysMode()) && dispatchOrder.getExceptionReason() == null) {
-                        dispatchOrder.setExceptionReason("15km内无据点可匹配 [" + dispatchOrder.getRequiredCategory() + "]");
+                        dispatchOrder.setExceptionReason("50km内无据点可匹配 [" + dispatchOrder.getRequiredCategory() + "]");
                         orderService.updateById(dispatchOrder);
                     }
                 }

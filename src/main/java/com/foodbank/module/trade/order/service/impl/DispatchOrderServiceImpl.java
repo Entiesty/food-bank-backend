@@ -87,17 +87,25 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     if (station != null) order.setTargetName(station.getStationName());
                 }
             } else {
+                // 求助单 (SOS/REQ)：判断是驿站发货还是 P2P 商家直供
+                boolean isP2P = false;
+                if (order.getGoodsId() != null) {
+                    com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(order.getGoodsId());
+                    if (goods != null && goods.getCurrentStationId() == null) {
+                        isP2P = true;
+                    }
+                }
                 if (order.getSourceId() != null) {
-                    Station station = null;
-                    if (order.getSourceId() < 0) {
-                        User merchant = userService.getById(-order.getSourceId());
+                    if (isP2P || order.getSourceId() < 0) {
+                        Long merchantId = order.getSourceId() < 0 ? -order.getSourceId() : order.getSourceId();
+                        User merchant = userService.getById(merchantId);
                         if (merchant != null) {
-                            order.setSourceName(merchant.getUsername() + " (爱心商铺直发)");
+                            order.setSourceName(merchant.getUsername() + " (🚨定向直供商铺)");
                             order.setSourceLon(merchant.getCurrentLon());
                             order.setSourceLat(merchant.getCurrentLat());
                         }
                     } else {
-                        station = stationService.getById(order.getSourceId());
+                        Station station = stationService.getById(order.getSourceId());
                         if (station != null) {
                             order.setSourceName(station.getStationName());
                             order.setSourceLon(station.getLongitude());
@@ -344,13 +352,12 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             throw new BusinessException("🚨 应急响应期间严禁市民自行外出，已关闭自提通道，请使用紧急呼救申请上门配送！");
         }
 
-        // ✅ 守卫A2: 平时模式下预约上门配送 → 需验证15km内有库存，无货或距离太远则友好拒绝
-        // 暂存最近驿站匹配结果 (在空间校验中填充，订单创建时消费)
+        // 守卫A2: 预约上门配送 → 空间匹配（平急模式均执行，平时无货拒绝，急时无货仅不绑定物资）
         Long matchedStationId = null;
         Long matchedGoodsId = null;
         String matchedGoodsName = null;
-        if (!"EMERGENCY".equals(config.getSysMode())
-                && (dto.getDeliveryMethod() == null || dto.getDeliveryMethod() == 1)) {
+        boolean isEmergency = "EMERGENCY".equals(config.getSysMode());
+        if (dto.getDeliveryMethod() == null || dto.getDeliveryMethod() == 1) {
             java.util.List<String> checkCats = com.foodbank.module.resource.goods.model.CategoryHierarchy.expand(dto.getRequiredCategory());
 
             // 全局快速短路：全城一粒库存都没有 → 直接拒绝
@@ -359,7 +366,10 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     .eq(com.foodbank.module.resource.goods.entity.Goods::getStatus, 2)
                     .gt(com.foodbank.module.resource.goods.entity.Goods::getStock, 0));
             if (totalAvailable == 0) {
-                throw new BusinessException("当前为平时模式，全城暂无 [" + dto.getRequiredCategory() + "] 类物资库存。建议前往「食物银行公益超市」选择已有物资自提，或等待爱心商家补货后重试。");
+                if (!isEmergency) {
+                    throw new BusinessException("当前为平时模式，全城暂无 [" + dto.getRequiredCategory() + "] 类物资库存。建议前往「食物银行公益超市」选择已有物资自提，或等待爱心商家补货后重试。");
+                }
+                // 应急模式：无库存不拒绝，由 DispatchJob + 商家募捐兜底
             }
 
             // 空间邻近校验 + 自动匹配最近驿站物资：找到 15km 内最近的据点并锁定物资
@@ -389,7 +399,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     if (st == null || st.getLongitude() == null || st.getLatitude() == null) continue;
                     double dist = haversine(reqLat.doubleValue(), reqLon.doubleValue(),
                                             st.getLatitude().doubleValue(), st.getLongitude().doubleValue());
-                    if (dist <= 15.0 && dist < bestDist) {
+                    if (dist <= 50.0 && dist < bestDist) {
                         bestDist = dist;
                         matchedStationId = st.getStationId();
                         matchedGoodsId = g.getGoodsId();
@@ -397,7 +407,10 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
                     }
                 }
                 if (matchedStationId == null) {
-                    throw new BusinessException("当前为平时模式， [" + dto.getRequiredCategory() + "] 类物资最近的据点也在 15km 以外。建议前往「食物银行公益超市」选择已有物资自提，或等待爱心商家补货后重试。");
+                    if (!isEmergency) {
+                        throw new BusinessException("当前为平时模式， [" + dto.getRequiredCategory() + "] 类物资最近的据点也在 50km 以外。建议前往「食物银行公益超市」选择已有物资自提，或等待爱心商家补货后重试。");
+                    }
+                    // 应急模式：15km内无匹配不拒绝，由 DispatchJob + 商家募捐兜底
                 }
             }
         }
@@ -475,8 +488,8 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             log.error("WebSocket 订单通知广播失败", e);
         }
 
-        // ✅ FIX-4: SOS紧急订单自动触发LBS雷达广播 (urgency>=8, 无需管理员手动点击)
-        if (dispatchOrder.getUrgencyLevel() != null && dispatchOrder.getUrgencyLevel() >= 8) {
+        // 自动触发LBS雷达广播：附近驿站无匹配物资时，向商家募捐（与紧急度无关）
+        if (dispatchOrder.getGoodsId() == null) {
             try {
                 dispatchEngineService.triggerEmergencyBroadcast(dispatchOrder.getOrderId());
                 log.info("🚨 SOS自动雷达已激活, 单号: {}", dispatchOrder.getOrderSn());
@@ -633,13 +646,11 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             taskService.updateById(task);
         }
 
-        // 【库存兜底回滚】自提订单取消后释放已锁定的物资
+        // 【库存兜底回滚】订单取消后释放已锁定的物资
         if (order.getGoodsId() != null) {
             com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(order.getGoodsId());
             if (goods != null) {
-                if (order.getDeliveryMethod() != null && order.getDeliveryMethod() == 2) {
-                    goods.setStock(goods.getStock() + 1);
-                }
+                goods.setStock(goods.getStock() + (order.getGoodsCount() != null ? order.getGoodsCount() : 1));
                 if (goods.getStatus() == 3) goods.setStatus((byte) 2);
                 goodsService.updateById(goods);
             }
@@ -740,36 +751,6 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             }
         }
 
-        // ==========================================
-        // 🚀 核心逻辑三：溯源双向反哺，给幕后【爱心商家】加分 (打通 0 分静默限制)
-        // ==========================================
-        if (order.getGoodsId() != null) {
-            com.foodbank.module.resource.goods.entity.Goods goods = goodsService.getById(order.getGoodsId());
-            if (goods != null && goods.getMerchantId() != null) {
-                User merchant = userService.getById(goods.getMerchantId());
-                if (merchant != null && merchant.getRole() == 2) {
-                    int merchantDelta = (rating == 5) ? 3 : (rating == 4 ? 1 : 0);
-
-                    // 🚨 核心修复：无论 merchantDelta 是否大于 0，都强制写入流水追踪表
-                    int oldScore = merchant.getCreditScore() != null ? merchant.getCreditScore() : 100;
-                    merchant.setCreditScore(oldScore + merchantDelta);
-                    userService.updateById(merchant);
-
-                    CreditLog merchantLog = new CreditLog();
-                    merchantLog.setUserId(merchant.getUserId());
-                    merchantLog.setOrderId(orderId);
-                    merchantLog.setChangeValue(merchantDelta);
-
-                    // 动态生成直观的账单解释说明
-                    String mReason = "受助方确认收货并给予 " + rating + " 星评价";
-                    if (merchantDelta == 0) {
-                        mReason += " (未达到奖励标准，无积分加成)";
-                    }
-                    merchantLog.setReason(mReason);
-                    creditLogService.save(merchantLog);
-                }
-            }
-        }
     }
 
     @Override
@@ -793,19 +774,6 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
 
         order.setStatus((byte) 2);
         this.updateById(order);
-
-        int oldScore = verifier.getCreditScore() != null ? verifier.getCreditScore() : 0;
-        verifier.setCreditScore(oldScore + 2);
-        userService.updateById(verifier);
-
-        CreditLog creditLog = new CreditLog();
-        creditLog.setUserId(verifierId);
-        creditLog.setOrderId(order.getOrderId());
-        creditLog.setChangeValue(2);
-        // 🚨 2. 核心修改：文案改为管理员专属文案即可
-        creditLog.setReason("驿站管理员协助市民完成线下核销提货");
-        creditLog.setCreateTime(LocalDateTime.now());
-        creditLogService.save(creditLog);
     }
 
     @Override

@@ -70,15 +70,8 @@ public class User implements Serializable {
     @TableField("vehicle_type")
     private Integer vehicleType;
 
-    // 👇 核心修复：补全受赠方(弱势群体)专属的三个字段
     @TableField("door_number")
     private String doorNumber;
-
-    @TableField("emergency_phone")
-    private String emergencyPhone;
-
-    @TableField("health_remark")
-    private String healthRemark;
 
     @TableField("time_coin")
     private Integer timeCoin;

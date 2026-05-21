@@ -110,10 +110,16 @@ public class AdminController {
         return Result.success(null, "身份标签与核验状态已更新，该受赠方已获得算法调度特权！");
     }
 
-    @Operation(summary = "5. 志愿者：信誉分人工干预", description = "处理投诉或表彰时的后台加减分")
+    @Operation(summary = "5. 志愿者：信誉分人工干预", description = "处理投诉或表彰时的后台加减分，仅限骑士角色")
     @PutMapping("/user/update-credit")
     public Result<Void> updateUserCredit(@RequestParam Long userId, @RequestParam Integer scoreChange) {
         checkAdminPermission();
+
+        User target = userService.getById(userId);
+        if (target == null) throw new BusinessException("用户不存在");
+        if (target.getRole() == null || target.getRole() != 3) {
+            throw new BusinessException("信誉分干预仅适用于护航骑士角色");
+        }
 
         boolean success = userService.update(new LambdaUpdateWrapper<User>()
                 .eq(User::getUserId, userId)

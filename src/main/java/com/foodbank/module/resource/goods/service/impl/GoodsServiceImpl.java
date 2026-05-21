@@ -178,53 +178,6 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         this.removeById(goodsId);
     }
 
-    // =========================================================================
-    // 🚨 核心修复 2：开启商家自送时，同步跃迁订单状态与履约模式！
-    // =========================================================================
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void startSelfDelivery(Long goodsId, Long merchantId) {
-        Goods goods = this.getById(goodsId);
-        if (goods == null || !goods.getMerchantId().equals(merchantId)) throw new BusinessException("物资不存在或无权操作");
-        if (goods.getStatus() != 0) throw new BusinessException("该物资已被调度引擎接管或在流转中，无法开启自送！");
-
-        // 1. 改变物资表状态
-        goods.setStatus((byte) 4);
-        this.updateById(goods);
-
-        // 2. 同步改变订单表状态，并把履约模式改为“自提/自送(2)”
-        LambdaUpdateWrapper<DispatchOrder> orderUpdate = new LambdaUpdateWrapper<>();
-        orderUpdate.eq(DispatchOrder::getGoodsId, goodsId)
-                .eq(DispatchOrder::getOrderType, (byte) 1) // 定位到这批物资对应的 DON 捐赠单
-                .set(DispatchOrder::getDeliveryMethod, (byte) 2) // 2代表商家亲自护送
-                .set(DispatchOrder::getStatus, (byte) 4); // 大屏上显示：🟣 商家自送中
-
-        dispatchOrderMapper.update(null, orderUpdate);
-    }
-
-    // =========================================================================
-    // 🚨 核心修复 3：完成商家自送时，同步让订单完美闭环入库！
-    // =========================================================================
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void finishSelfDelivery(Long goodsId, Long merchantId) {
-        Goods goods = this.getById(goodsId);
-        if (goods == null || !goods.getMerchantId().equals(merchantId)) throw new BusinessException("物资不存在或无权操作");
-        if (goods.getStatus() != 4) throw new BusinessException("操作失败，该物资当前未处于自送状态！");
-
-        // 1. 改变物资表状态为已入库
-        goods.setStatus((byte) 2);
-        this.updateById(goods);
-
-        // 2. 同步改变订单表状态为已完结/已入库
-        LambdaUpdateWrapper<DispatchOrder> orderUpdate = new LambdaUpdateWrapper<>();
-        orderUpdate.eq(DispatchOrder::getGoodsId, goodsId)
-                .eq(DispatchOrder::getOrderType, (byte) 1)
-                .set(DispatchOrder::getStatus, (byte) 2); // 大屏上显示：🟢 已抵达入库
-
-        dispatchOrderMapper.update(null, orderUpdate);
-    }
-
     @Override
     public List<Goods> getStationGoods(Long stationId) {
         LambdaQueryWrapper<Goods> wrapper = new LambdaQueryWrapper<Goods>()

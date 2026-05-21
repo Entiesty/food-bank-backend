@@ -67,15 +67,9 @@ public class UserController {
             updateWrapper.set(User::getVehicleType, dto.getVehicleType());
         }
 
-        // 4. 受赠方专属字段：门牌号与健康信息
+        // 4. 受赠方专属字段：门牌号
         if (dto.getDoorNumber() != null) {
             updateWrapper.set(User::getDoorNumber, dto.getDoorNumber());
-        }
-        if (dto.getEmergencyPhone() != null) {
-            updateWrapper.set(User::getEmergencyPhone, dto.getEmergencyPhone());
-        }
-        if (dto.getHealthRemark() != null) {
-            updateWrapper.set(User::getHealthRemark, dto.getHealthRemark());
         }
         if (dto.getUserTag() != null) {
             updateWrapper.set(User::getUserTag, dto.getUserTag());
@@ -85,7 +79,6 @@ public class UserController {
         }
         if (dto.getDeliveryType() != null) {
             updateWrapper.set(User::getDeliveryType, dto.getDeliveryType());
-            updateWrapper.set(User::getIsVerified, (byte) 0); // 修改配送方式须重新审核
         }
 
         boolean success = userService.update(updateWrapper);

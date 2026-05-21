@@ -73,20 +73,6 @@ public class GoodsController {
         return Result.success(null, "撤销成功，该物资已从调度大盘中移除");
     }
 
-    @Operation(summary = "5. 商家开始自行配送")
-    @PutMapping("/start-self-delivery/{goodsId}")
-    public Result<Void> startSelfDelivery(@PathVariable Long goodsId) {
-        goodsService.startSelfDelivery(goodsId, UserContext.getUserId());
-        return Result.success(null, "物资已锁定！请注意交通安全，到达后请确认送达。");
-    }
-
-    @Operation(summary = "6. 商家确认已送达驿站")
-    @PutMapping("/finish-self-delivery/{goodsId}")
-    public Result<Void> finishSelfDelivery(@PathVariable Long goodsId) {
-        goodsService.finishSelfDelivery(goodsId, UserContext.getUserId());
-        return Result.success(null, "物资已成功入库，感谢您的亲力亲为！");
-    }
-
     @Operation(summary = "查询指定驿站大仓台账", description = "获取当前入库可调度的物资列表")
     @GetMapping("/station/{stationId}")
     public Result<List<Goods>> getStationGoods(@PathVariable Long stationId) {

@@ -123,10 +123,14 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                         goods.setCurrentStationId(dispatchOrder.getDestId());
                         log.info("📦 平时调度完成：物资 [{}] 已正式入库至驿站 ID:[{}]", goods.getGoodsName(), dispatchOrder.getDestId());
                     } else if (dispatchOrder.getOrderType() == 2) {
-                        // 【急时态】直达灾民，物资彻底消耗
-                        goods.setStatus((byte) 3); // 3-已发完/消耗
-                        goods.setCurrentStationId(null);
-                        log.info("🔥 紧急调度完成：物资 [{}] 已直接送达受赠方，物资生命周期结束！", goods.getGoodsName());
+                        // 求助单送达：扣减已在发布时完成，根据剩余库存决定物资状态
+                        if (goods.getStock() != null && goods.getStock() > 0) {
+                            goods.setStatus((byte) 2); // 仍有库存 → 保持可分配
+                        } else {
+                            goods.setStatus((byte) 3); // 库存耗尽 → 标记已消耗
+                            goods.setCurrentStationId(null);
+                        }
+                        log.info("📦 求助单送达完成：物资 [{}] 剩余库存 {}", goods.getGoodsName(), goods.getStock());
                     }
                     goodsService.updateById(goods);
                 }
@@ -332,7 +336,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         }
 
         com.foodbank.module.system.config.entity.Config config = configService.getCurrentConfig();
-        if ("EMERGENCY_RESPONSE".equals(config.getSysMode()) && task.getActualDistance().compareTo(new BigDecimal("5.0")) > 0) {
+        if ("EMERGENCY".equals(config.getSysMode()) && task.getActualDistance().compareTo(new BigDecimal("5.0")) > 0) {
             User volunteer = userService.getById(volunteerId);
             double vehicleCoeff = switch (volunteer.getVehicleType() != null ? volunteer.getVehicleType() : 1) {
                 case 1 -> 0.0;

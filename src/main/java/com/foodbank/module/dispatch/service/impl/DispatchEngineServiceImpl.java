@@ -109,7 +109,7 @@ public class DispatchEngineServiceImpl {
             String destLonLat = merchant.getCurrentLon() + "," + merchant.getCurrentLat();
             try {
                 AmapDirectionResponse.Path path = amapClientService.getRidingDistance(originLonLat, destLonLat);
-                if (path.distance() > 15000) continue; // 超出15km直接舍弃
+                if (path.distance() > 50000) continue; // 超出50km直接舍弃
 
                 // 💡 架构师黑魔法：将商家伪装成“虚拟站点”，ID取负数。这样不改表结构就能兼容现有骑士履约闭环
                 Station fakeStation = new Station();
@@ -139,7 +139,7 @@ public class DispatchEngineServiceImpl {
         // ==========================================================
         log.info("ℹ️ L0级直达无匹配，降级进入 L1 驿站中转寻源...");
         GeoResults<RedisGeoCommands.GeoLocation<String>> geoResults =
-                stationService.searchNearbyStations(dispatchOrder.getTargetLon().doubleValue(), dispatchOrder.getTargetLat().doubleValue(), 15.0);
+                stationService.searchNearbyStations(dispatchOrder.getTargetLon().doubleValue(), dispatchOrder.getTargetLat().doubleValue(), 50.0);
 
         if (geoResults != null && !geoResults.getContent().isEmpty()) {
             for (var result : geoResults.getContent()) {
@@ -249,7 +249,7 @@ public class DispatchEngineServiceImpl {
                     && order.getSourceLat() != null && order.getSourceLon() != null) {
                 double dist = calculateDistance(order.getSourceLat().doubleValue(), order.getSourceLon().doubleValue(),
                         order.getTargetLat().doubleValue(), order.getTargetLon().doubleValue());
-                if (dist > 5.0 && vType <= 2) {
+                if (dist > 50.0 && vType <= 2) {
                     throw new BusinessException("🚨 运力不匹配：该单跨区较远(" + String.format("%.1f", dist) + "km)，请移交机动骑士！");
                 }
             }
@@ -335,8 +335,8 @@ public class DispatchEngineServiceImpl {
         for (User m : allMerchants) {
             double dist = calculateDistance(order.getTargetLat().doubleValue(), order.getTargetLon().doubleValue(),
                     m.getCurrentLat().doubleValue(), m.getCurrentLon().doubleValue());
-            if (dist <= 3.0) list3km.add(m);
-            if (dist <= 10.0) list10km.add(m);
+            if (dist <= 10.0) list3km.add(m);
+            if (dist <= 30.0) list10km.add(m);
         }
 
         List<User> targetMerchants;
@@ -349,7 +349,7 @@ public class DispatchEngineServiceImpl {
         } else if (!allMerchants.isEmpty()) {
             // 🚨 全城终极广播兜底：无视距离，向全城所有爱心商铺发射信号
             targetMerchants = allMerchants; result.put("radius", -1); result.put("isDegraded", true);
-            log.warn("📡 全城终极广播兜底已激活！10km内无商铺响应，已将搜索半径扩大至全城 ({} 家商铺)", allMerchants.size());
+            log.warn("📡 全城终极广播兜底已激活！30km内无商铺响应，已将搜索半径扩大至全城 ({} 家商铺)", allMerchants.size());
         } else {
             // 失败也需手动释放防抖锁，否则要等 30 秒
             stringRedisTemplate.delete(lockKey);
