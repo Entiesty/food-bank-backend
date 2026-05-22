@@ -11,6 +11,7 @@ public class MerchantGoodsVO {
     private String goodsName;
     private String category;
     private Integer stock;
+    private Integer initialStock;
 
     @Schema(description = "0-待取货, 1-干线运输中, 2-已入库, 3-已发完")
     private Byte status;

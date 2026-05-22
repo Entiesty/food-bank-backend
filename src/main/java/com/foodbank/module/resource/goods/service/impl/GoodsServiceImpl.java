@@ -57,6 +57,7 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         goods.setGoodsName(dto.getGoodsName());
         goods.setCategory(dto.getCategory());
         goods.setStock(dto.getStock());
+        goods.setInitialStock(dto.getStock());
         goods.setExpirationDate(dto.getExpirationDate());
         goods.setIsEmergencyOnly(autoTagEmergency(dto.getCategory()));
         goods.setGoodsImageUrl(dto.getGoodsImageUrl());

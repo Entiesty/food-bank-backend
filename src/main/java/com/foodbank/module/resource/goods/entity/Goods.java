@@ -35,6 +35,9 @@ public class Goods implements Serializable {
     @TableField("stock")
     private Integer stock;
 
+    @TableField("initial_stock")
+    private Integer initialStock;
+
     @TableField("status")
     private Byte status;
 

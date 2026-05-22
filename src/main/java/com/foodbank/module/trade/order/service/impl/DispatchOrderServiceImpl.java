@@ -247,6 +247,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         goods.setGoodsName(dto.getGoodsName());
         goods.setCategory(dto.getCategory());
         goods.setStock(dto.getStock());
+        goods.setInitialStock(dto.getStock());
         goods.setUnit(dto.getUnit() != null ? dto.getUnit() : "件");
         goods.setExpirationDate(dto.getExpirationDate());
         goods.setVolumeLevel(dto.getVolumeLevel() != null ? dto.getVolumeLevel() : 1);
