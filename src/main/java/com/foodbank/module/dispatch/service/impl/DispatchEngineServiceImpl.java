@@ -238,7 +238,7 @@ public class DispatchEngineServiceImpl {
 
             DispatchOrder order = orderService.getById(orderId);
             if (order == null || order.getStatus() != 0) {
-                throw new BusinessException("手慢了！该订单已被领取或状态已变更");
+                throw new BusinessException("该订单已被领取或状态已变更");
             }
 
             // 3. 🚨 完美保留你的 CVRP 距离与容量校验算法！

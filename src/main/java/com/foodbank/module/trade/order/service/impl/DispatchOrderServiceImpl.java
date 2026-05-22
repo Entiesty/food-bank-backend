@@ -449,7 +449,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             // 自提: 原子乐观锁扣减, 锁定指定物资
             boolean success = goodsService.deductStockSafe(dto.getGoodsId(), 1);
             if (!success) {
-                throw new BusinessException("手慢了！该物资已被抢空！");
+                throw new BusinessException("该物资已被他人领取");
             }
 
             String code = String.valueOf((int)((Math.random() * 9 + 1) * 100000));
@@ -463,7 +463,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             // 平时模式 + 预约上门配送: 自动匹配最近驿站物资, 原子扣减库存
             boolean success = goodsService.deductStockSafe(matchedGoodsId, 1);
             if (!success) {
-                throw new BusinessException("手慢了！该物资已被抢空，请重新提交求助。");
+                throw new BusinessException("该物资已被他人领取，请重新提交求助。");
             }
             dispatchOrder.setSourceId(matchedStationId);
             dispatchOrder.setGoodsId(matchedGoodsId);
