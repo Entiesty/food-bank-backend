@@ -276,6 +276,11 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         boolean updated = this.update(wrapper);
         if (!updated) throw new BusinessException("该求助已被其他爱心商家抢先响应");
 
+        // 2.5 饱和式救援：全额扣减库存，goodsCount = stock
+        if (!gs.deductStockSafe(goods.getGoodsId(), dto.getStock())) {
+            throw new BusinessException("库存扣减失败，请重试");
+        }
+
         // 3. WebSocket 通知受赠方
         DispatchOrder sos = this.getById(dto.getOrderId());
         if (sos != null && sos.getDestId() != null) {
