@@ -13,7 +13,11 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * 核心：多因子加权调度决策算法 (动态配置热加载增强版)
+ * SAW (Simple Additive Weighting) 多因子调度决策策略。
+ *
+ * 从 Config 实体读取运行时六维权重矩阵 (wDist / wUrgency / wCredit / wTag / wExpiration / wStock)，
+ * 对各候选物资执行 Min-Max 归一化后计算加权综合得分并降序排序。
+ * wTimeCoin 独立于六维体系，仅在志愿者抢单路径生效。
  */
 @Slf4j
 @Component
@@ -23,7 +27,11 @@ public class MultiFactorDispatchStrategy {
     private IConfigService configService;
 
     /**
-     * 对候选物资/据点进行综合打分并排序 (系统大盘自动指派使用)
+     * 对候选物资/驿站执行 Min-Max 归一化并计算 SAW 综合得分，用于系统端自动指派。
+     *
+     * @param candidates   候选驿站及物资列表
+     * @param orderUrgency 订单紧急度 (1-10)
+     * @return 按 finalScore 降序排列的候选列表
      */
     public List<DispatchCandidateVO> calculateAndRank(List<DispatchCandidateVO> candidates, int orderUrgency) {
         if (candidates == null || candidates.isEmpty()) {
@@ -72,8 +80,16 @@ public class MultiFactorDispatchStrategy {
     }
 
     /**
-     * 🚀 核心新增：为志愿者抢单大厅提供千人千面的排序测算
-     * 计算真正的“接驾距离”，并融合信誉与紧急度进行最终打分
+     * 志愿者抢单大厅排序策略。
+     *
+     * 计算志愿者到各订单起点的接驾距离 (Haversine)，结合紧急度、信誉分及时间币，
+     * 经 Min-Max 归一化后加权求和得到 matchScore，实现千人千面的个性化订单排序。
+     *
+     * @param orders    待排序订单列表
+     * @param volLon    志愿者经度
+     * @param volLat    志愿者纬度
+     * @param volCredit 志愿者信誉分 (0-150)
+     * @param timeCoin  志愿者时间币 (0-50)
      */
     public void rankOrdersForVolunteer(List<AvailableOrderVO> orders, Double volLon, Double volLat, int volCredit) {
         rankOrdersForVolunteer(orders, volLon, volLat, volCredit, 0);
@@ -128,7 +144,7 @@ public class MultiFactorDispatchStrategy {
     }
 
     /**
-     * 📐 Haversine 直线距离测算 (km)
+     * Haversine 球面距离公式 (km)，用于无高德 API 覆盖时的距离估算降级。
      */
     private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
         final int R = 6371;

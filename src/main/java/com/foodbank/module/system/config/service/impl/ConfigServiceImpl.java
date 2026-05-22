@@ -90,17 +90,20 @@ public class ConfigServiceImpl extends ServiceImpl<ConfigMapper, Config> impleme
         config.setModeActivatedAt(LocalDateTime.now());
         config.setModeActivatedBy(operatorId);
 
-        // SAW 权重自动联动
+        // 运行时热加载 SAW 六维权重预设，无需重启
         applyPresetWeights(config, targetMode);
 
         this.updateById(config);
 
-        log.info("【应急状态机】 系统模式跃迁: {} → {}, 权重已自动同步, 操作人ID: {}", currentMode, targetMode, operatorId);
+        log.info("[状态机] 系统模式切换: {} -> {} 操作人ID: {} 权重已联动更新", currentMode, targetMode, operatorId);
     }
 
+    /**
+     * SAW 六维权重预设。
+     * NORMAL: 距离优先 (wDist=0.35)，EMERGENCY: 紧急度优先 (wUrgency=0.45)。
+     * 六维之和恒为 1.00；wTimeCoin 独立于六维体系，仅在志愿者抢单路径生效。
+     */
     private void applyPresetWeights(Config config, String mode) {
-        // 六维SAW权重预设 (wDist + wUrgency + wCredit + wTag + wExpiration + wStock = 1.00)
-        // wTimeCoin 独立于六维体系, 仅在志愿者抢单路径生效
         switch (mode) {
             case "NORMAL":
                 config.setWDist(new BigDecimal("0.35"));

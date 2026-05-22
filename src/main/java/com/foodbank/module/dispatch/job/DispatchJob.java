@@ -20,7 +20,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 调度系统大心脏：后台自动化撮配引擎 & 异常监控雷达
+ * 定时调度任务：自动撮合引擎 (5s) + 异常订单监控 (60s)。
  */
 @Slf4j
 @Component
@@ -39,12 +39,13 @@ public class DispatchJob {
     private com.foodbank.module.system.config.service.IConfigService configService;
 
     /**
-     * 1. 自动撮合引擎：每隔 5 秒执行一次扫描
+     * 自动撮合引擎 (fixedDelay=5000ms)：
+     * 扫描待匹配 SOS/REQ 订单，调用 smartMatchStations 执行 L0/L1 匹配并扣减库存。
      */
     @Scheduled(fixedDelay = 5000)
     @Transactional(rollbackFor = Exception.class)
     public void executeMatchEngine() {
-        // 🚨 这里加了 isNull 拦截，防止重复扫描已被接管的订单
+        // isNull(sourceId) 防止重复扫描已被接管的订单
         List<DispatchOrder> pendingDispatchOrders = orderService.list(new LambdaQueryWrapper<DispatchOrder>()
                 .eq(DispatchOrder::getStatus, 0)
                 .eq(DispatchOrder::getOrderType, 2)
@@ -74,13 +75,15 @@ public class DispatchJob {
                     }
                 }
             } catch (Exception e) {
-                log.error("❌ [匹配异常] 订单:{} 发生未知错误: ", dispatchOrder.getOrderSn(), e);
+                log.error("[匹配异常] 订单:{} 匹配失败", dispatchOrder.getOrderSn(), e);
             }
         }
     }
 
     /**
-     * 🚨 2. 异常监控雷达 (全新架构)：每分钟第0秒扫描一次，抓出滞留单！
+     * 异常订单监控 (cron: 每分钟扫描)：
+     * 仅应急模式下执行，检测库存为零或滞留超3分钟的订单并标记异常原因；
+     * 异常恢复时自动清除标记（自愈）。
      */
     @Scheduled(cron = "0 * * * * ?")
     public void monitorExceptionOrders() {
@@ -122,15 +125,15 @@ public class DispatchJob {
                 if (!currentReason.equals(order.getExceptionReason())) {
                     order.setExceptionReason(currentReason);
                     orderService.updateById(order);
-                    log.warn("🚨 [异常雷达触发] 订单 {} 被拦截，原因: {}", order.getOrderSn(), currentReason);
+                    log.warn("[异常监控] 订单{} 触发异常: {}", order.getOrderSn(), currentReason);
                 }
             } else {
-                // ✨ 自动自愈：如果有货了且有人接了，自动清空异常！
+                // 自愈机制：库存恢复或订单被接单后自动清除异常标记
                 if (order.getExceptionReason() != null) {
                     orderService.update(new LambdaUpdateWrapper<DispatchOrder>()
                             .eq(DispatchOrder::getOrderId, order.getOrderId())
                             .set(DispatchOrder::getExceptionReason, null));
-                    log.info("✨ [系统自愈] 订单 {} 恢复正常，警报解除！", order.getOrderSn());
+                    log.info("[自愈] 订单{} 异常清除 恢复正常", order.getOrderSn());
                 }
             }
         }

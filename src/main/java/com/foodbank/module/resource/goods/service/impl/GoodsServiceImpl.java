@@ -209,7 +209,7 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         } else throw new BusinessException("非法的干预类型");
 
         this.updateById(goods);
-        log.info("⚖️ 大仓手工平账: 物资[{}] 事由: {}", goods.getGoodsName(), dto.getReason());
+        log.info("[库存校准] 物资[{}] 事由: {}", goods.getGoodsName(), dto.getReason());
     }
 
     private void updateMerchantCsrStats(Long merchantId, int newStock) {
@@ -227,11 +227,12 @@ public class GoodsServiceImpl extends ServiceImpl<GoodsMapper, Goods> implements
         merchant.setCsrLevel(csrLevel);
 
         userMapper.updateById(merchant);
-        log.info("🏅 商家CSR更新: 商家[{}] 累计捐赠{}件, CSR等级: {}", merchantId, totalDonations, csrLevel);
+        log.info("[CSR] 商家[{}] 累计捐赠{}件 等级: {}", merchantId, totalDonations, csrLevel);
     }
 
     /**
-     * 按类目自动判定战备物资 — 商家无需手动勾选
+     * 按类目自动标记应急物资 (isEmergencyOnly=1)：
+     * 应急物资大类 + 医疗健康子类自动标记，其余为普通物资。
      */
     private byte autoTagEmergency(String category) {
         if (category == null) return 0;

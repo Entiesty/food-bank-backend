@@ -98,7 +98,7 @@ public class DispatchController {
         return Result.success(response);
     }
 
-    // 🚨 持久化广播：商家轮询获取所有未处理的紧急广播列表 (不再阅后即焚)
+    // 持久化广播：商家轮询获取所有未处理的紧急广播列表
     @Operation(summary = "商家轮询接收紧急广播列表", description = "持久化广播，仅商家成功接单后才清除对应orderId")
     @GetMapping("/emergency/my-broadcast")
     public Result<java.util.List<Map<String, String>>> checkMyBroadcast() {
@@ -130,7 +130,7 @@ public class DispatchController {
                 if (parts.length > 7) data.put("lat", parts[7]);
                 list.add(data);
             }
-            log.info("📡 商家 {} 轮询拉取到 {} 条紧急广播", myUserId, list.size());
+            log.info("[紧急广播] 商家{} 轮询获取{}条广播", myUserId, list.size());
         }
 
         return Result.success(list);

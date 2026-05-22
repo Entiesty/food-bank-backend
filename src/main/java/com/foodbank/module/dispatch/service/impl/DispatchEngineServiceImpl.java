@@ -61,7 +61,7 @@ public class DispatchEngineServiceImpl {
     @Autowired
     private com.foodbank.module.system.config.service.IConfigService configService;
 
-    // 🚨 注入高并发双擎组件
+    // Redisson 分布式锁 + RabbitMQ 异步队列，用于抢单并发控制与削峰
     @Autowired
     private RedissonClient redissonClient;
     @Autowired
@@ -72,12 +72,12 @@ public class DispatchEngineServiceImpl {
     }
 
     public List<DispatchCandidateVO> smartMatchStations(DispatchOrder dispatchOrder) {
-        log.info("📡 启动智能派单匹配，坐标:[{},{}], 需求大类:{}, 需求标签:{}",
+        log.info("[LBS匹配] 启动智能派单 坐标:[{},{}] 需求大类:{} 需求标签:{}",
                 dispatchOrder.getTargetLon(), dispatchOrder.getTargetLat(),
                 dispatchOrder.getRequiredCategory(), dispatchOrder.getRequiredTags());
 
         String sysMode = configService.getCurrentConfig().getSysMode();
-        log.info("【应急模式感知】 当前系统模式: {}", sysMode);
+        log.info("[LBS匹配] 当前系统模式: {}", sysMode);
 
         // 1. 领域大类映射 (Domain Mapping) — 通过 CategoryHierarchy 枚举统一管理
         List<String> targetCategories = com.foodbank.module.resource.goods.model.CategoryHierarchy.expand(dispatchOrder.getRequiredCategory());
@@ -92,7 +92,7 @@ public class DispatchEngineServiceImpl {
         List<DispatchCandidateVO> candidates = new ArrayList<>();
 
         // ==========================================================
-        // 🚀 L0级：战时点对点直达匹配 (Point-to-Point)
+        // L0: P2P 点对点直达匹配 — 商家直供物资跳过驿站中转
         // ==========================================================
         List<DispatchOrder> directSupplyOrders = dispatchOrderMapper.selectPendingDirectSupplyOrders(targetCategories, sysMode);
 
@@ -111,13 +111,13 @@ public class DispatchEngineServiceImpl {
                 AmapDirectionResponse.Path path = amapClientService.getRidingDistance(originLonLat, destLonLat);
                 if (path.distance() > 50000) continue; // 超出50km直接舍弃
 
-                // 💡 架构师黑魔法：将商家伪装成“虚拟站点”，ID取负数。这样不改表结构就能兼容现有骑士履约闭环
+                // 将商家映射为虚拟站点 (负ID)，复用现有骑士履约闭环而不修改表结构
                 Station fakeStation = new Station();
                 fakeStation.setStationId(-merchant.getUserId());
-                fakeStation.setStationName("🚨紧急直发: " + merchant.getUsername());
+                fakeStation.setStationName(merchant.getUsername() + “ (P2P直达)”);
                 fakeStation.setLongitude(merchant.getCurrentLon());
                 fakeStation.setLatitude(merchant.getCurrentLat());
-                fakeStation.setAddress("由爱心商铺直线护送");
+                fakeStation.setAddress("点对点直达配送");
 
                 candidates.add(DispatchCandidateVO.builder()
                         .station(fakeStation).goods(goods)
@@ -129,15 +129,15 @@ public class DispatchEngineServiceImpl {
         }
 
         if (!candidates.isEmpty()) {
-            log.info("🔥 L0级直达匹配成功！发现 {} 个紧急供应源，将直接指派骑士越过驿站！", candidates.size());
+            log.info("[L0 P2P] 发现 {} 个直供物资源，跳过驿站中转直接匹配", candidates.size());
             enrichRiderDistance(candidates);
             return dispatchStrategy.calculateAndRank(candidates, dispatchOrder.getUrgencyLevel());
         }
 
         // ==========================================================
-        // 🚚 L1级：平时中转站调度匹配 (Hub-and-Spoke)
+        // L1: Hub-and-Spoke 驿站中转匹配 — Redis GEO 近邻检索 + 高德骑行测距
         // ==========================================================
-        log.info("ℹ️ L0级直达无匹配，降级进入 L1 驿站中转寻源...");
+        log.info("[L1 Hub中转] L0无匹配结果，降级进入驿站中转寻源");
         GeoResults<RedisGeoCommands.GeoLocation<String>> geoResults =
                 stationService.searchNearbyStations(dispatchOrder.getTargetLon().doubleValue(), dispatchOrder.getTargetLat().doubleValue(), 50.0);
 
@@ -213,9 +213,10 @@ public class DispatchEngineServiceImpl {
         return (double) matchCount / reqTags.size();
     }
 
-    // ==============================================================================
-    // 🚀 终极版高并发抢单：Redis 分布式锁拦截 + 你的 CVRP 算法校验 + RabbitMQ 异步入库
-    // ==============================================================================
+    /**
+     * 高并发抢单：Redisson 分布式锁 (tryLock 2s/10s TTL) 保护临界区，
+     * 锁内执行 CVRP 载具容量与跨区距离校验，通过后投递 RabbitMQ 异步落库。
+     */
     public void grabOrder(Long orderId, Long volunteerId) {
         if (orderId == null || volunteerId == null) throw new BusinessException("订单ID或志愿者ID不能为空");
 
@@ -225,12 +226,12 @@ public class DispatchEngineServiceImpl {
             throw new BusinessException("您的资质尚未通过审核，暂无接单权限！");
         }
 
-        // 1. 构建全局排他锁，防止 1000 个人同时校验引发雪崩
+        // 1. Redisson 分布式排他锁，防止并发抢单惊群效应
         String lockKey = "lock:order:grab:" + orderId;
         RLock lock = redissonClient.getLock(lockKey);
 
         try {
-            // 2. 尝试上锁，挡住并发洪峰
+            // 2. tryLock(2, 10, TimeUnit.SECONDS): 等待2秒，锁持有10秒自动释放
             boolean isLocked = lock.tryLock(2, 10, TimeUnit.SECONDS);
             if (!isLocked) {
                 throw new BusinessException("当前抢单人数过多或已被他人抢占，请稍后重试！");
@@ -241,7 +242,7 @@ public class DispatchEngineServiceImpl {
                 throw new BusinessException("该订单已被领取或状态已变更");
             }
 
-            // 3. 🚨 完美保留你的 CVRP 距离与容量校验算法！
+            // 3. CVRP 载具容量约束校验: 跨区距离 + 累计装载重量/体积上限
             Integer vType = volunteer.getVehicleType() != null ? volunteer.getVehicleType() : 1;
 
             // 3.1 跨区距离拦截
@@ -250,7 +251,7 @@ public class DispatchEngineServiceImpl {
                 double dist = calculateDistance(order.getSourceLat().doubleValue(), order.getSourceLon().doubleValue(),
                         order.getTargetLat().doubleValue(), order.getTargetLon().doubleValue());
                 if (dist > 50.0 && vType <= 2) {
-                    throw new BusinessException("🚨 运力不匹配：该单跨区较远(" + String.format("%.1f", dist) + "km)，请移交机动骑士！");
+                    throw new BusinessException("运力不匹配：该单跨区 " + String.format("%.1f", dist) + "km，超出当前载具配送范围");
                 }
             }
 
@@ -283,15 +284,15 @@ public class DispatchEngineServiceImpl {
                     int newWeightPoint = newGoods.getWeightLevel() == 3 ? 20 : (newGoods.getWeightLevel() == 2 ? 5 : 1);
 
                     if ((currentVolumePoints + newVolumePoint) > maxVolumePoints) {
-                        throw new BusinessException("🚨 爆仓预警：您的载具容量已达极限！请先完成当前配送！");
+                        throw new BusinessException("载具容量已达上限，请先完成当前配送");
                     }
                     if ((currentWeightPoints + newWeightPoint) > maxWeightPoints) {
-                        throw new BusinessException("🚨 超载预警：继续接单将超出您的载具安全承重，已强行熔断！");
+                        throw new BusinessException("超出载具承重上限，请先完成当前配送");
                     }
                 }
             }
 
-            // 4. 🚨 校验通过，丢入 MQ 队列实现异步削峰 (不再直接写 MySQL)
+            // 4. 通过 RabbitMQ 异步落库，削峰填谷
             Map<String, Object> message = new HashMap<>();
             message.put("orderId", orderId);
             message.put("volunteerId", volunteerId);
@@ -299,7 +300,7 @@ public class DispatchEngineServiceImpl {
 
             rabbitTemplate.convertAndSend(RabbitMQConfig.EXCHANGE_NAME, RabbitMQConfig.GRAB_ORDER_ROUTING_KEY, message);
 
-            log.info("🚀 骑士 [{}] 成功通过CVRP校验并抢占分布式锁，单号 {} 已送入MQ排队入库", volunteerId, order.getOrderSn());
+            log.info("[抢单] 骑士[{}] 通过CVRP校验 单号{} 已投递MQ", volunteerId, order.getOrderSn());
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -319,11 +320,11 @@ public class DispatchEngineServiceImpl {
     }
 
     public Map<String, Object> triggerEmergencyBroadcast(Long orderId) {
-        // 🛡️ 架构师防线 4：分布式防重放锁 (防止管理员手抖狂点)
+        // Redis setIfAbsent 防重放锁 (30s TTL)，防止管理员误触发重复广播
         String lockKey = "LOCK:BROADCAST:" + orderId;
         Boolean isLocked = stringRedisTemplate.opsForValue().setIfAbsent(lockKey, "1", 30, TimeUnit.SECONDS);
         if (Boolean.FALSE.equals(isLocked)) {
-            throw new BusinessException("⚠️ 正在向全城发射紧急广播信号，请勿在 30 秒内频繁点击！");
+            throw new BusinessException("广播信号发送中，请30秒后再试");
         }
 
         DispatchOrder order = orderService.getById(orderId);
@@ -347,13 +348,13 @@ public class DispatchEngineServiceImpl {
         } else if (!list10km.isEmpty()) {
             targetMerchants = list10km; result.put("radius", 10); result.put("isDegraded", true);
         } else if (!allMerchants.isEmpty()) {
-            // 🚨 全城终极广播兜底：无视距离，向全城所有爱心商铺发射信号
+            // 全城广播兜底：30km内无商铺时覆盖全城
             targetMerchants = allMerchants; result.put("radius", -1); result.put("isDegraded", true);
-            log.warn("📡 全城终极广播兜底已激活！30km内无商铺响应，已将搜索半径扩大至全城 ({} 家商铺)", allMerchants.size());
+            log.warn("[紧急广播] 30km内无商铺响应，触发全城广播兜底 (覆盖{}家商铺)", allMerchants.size());
         } else {
             // 失败也需手动释放防抖锁，否则要等 30 秒
             stringRedisTemplate.delete(lockKey);
-            throw new BusinessException("终极熔断：全城暂无可用爱心商铺资源");
+            throw new BusinessException("全城暂无可用商铺资源");
         }
 
         // 查求助人信息
@@ -371,7 +372,7 @@ public class DispatchEngineServiceImpl {
             String msg = order.getRequiredCategory() + "|" + order.getOrderId() + "|"
                        + recipientName + "|" + recipientTag + "|" + doorNumber + "|" + urgency + "|"
                        + recipientLon + "|" + recipientLat;
-            log.info("📡 紧急广播写入 Redis: key={}, msg={}", redisKey, msg);
+            log.info("[紧急广播] 写入Redis key={} msg={}", redisKey, msg);
             stringRedisTemplate.opsForValue().set(redisKey, msg, 2, TimeUnit.HOURS);
         }
 
