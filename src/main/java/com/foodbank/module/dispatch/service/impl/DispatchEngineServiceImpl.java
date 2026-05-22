@@ -245,6 +245,22 @@ public class DispatchEngineServiceImpl {
             // 3. CVRP 载具容量约束校验: 跨区距离 + 累计装载重量/体积上限
             Integer vType = volunteer.getVehicleType() != null ? volunteer.getVehicleType() : 1;
 
+            // 3.0 若订单尚未匹配物资（goodsId 为空），尝试同步匹配
+            if (order.getGoodsId() == null) {
+                List<DispatchCandidateVO> matched = smartMatchStations(order);
+                if (matched != null && !matched.isEmpty()) {
+                    DispatchCandidateVO winner = matched.get(0);
+                    boolean deductSuccess = goodsService.deductStockSafe(winner.getGoods().getGoodsId(), 1);
+                    if (deductSuccess) {
+                        order.setGoodsId(winner.getGoods().getGoodsId());
+                        order.setSourceId(winner.getStation().getStationId());
+                        order.setGoodsName(winner.getGoods().getGoodsName());
+                        order.setGoodsCount(1);
+                        orderService.updateById(order);
+                    }
+                }
+            }
+
             // 3.1 跨区距离拦截
             if (order.getTargetLat() != null && order.getTargetLon() != null
                     && order.getSourceLat() != null && order.getSourceLon() != null) {
