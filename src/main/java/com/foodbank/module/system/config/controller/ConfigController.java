@@ -33,11 +33,11 @@ public class ConfigController {
     public Result<Void> updateConfig(@Validated @RequestBody ConfigUpdateDTO dto) {
         Byte role = UserContext.getUserRole();
         if (role == null || role != 4) {
-            throw new BusinessException("越权操作警报：仅限 Root 指挥中心管理员修改调度引擎底层参数！");
+            throw new BusinessException("越权操作：仅限管理员修改调度参数");
         }
 
         configService.updateEngineConfig(dto);
-        return Result.success(null, "底层调度引擎参数已热更新完毕，即时生效！");
+        return Result.success(null, "调度参数已更新");
     }
 
     @Operation(summary = "3. 应急状态机切换 (NORMAL → WARNING_FREEZE → EMERGENCY_RESPONSE → RECOVERY → NORMAL)")
@@ -45,7 +45,7 @@ public class ConfigController {
     public Result<String> switchMode(@Validated @RequestBody SwitchModeDTO dto) {
         Byte role = UserContext.getUserRole();
         if (role == null || role != 4) {
-            throw new BusinessException("越权操作：仅限 Root 指挥中心管理员切换应急模式");
+            throw new BusinessException("越权操作：仅限管理员切换应急模式");
         }
 
         Long operatorId = UserContext.getUserId();

@@ -80,6 +80,14 @@ public class MultiFactorDispatchStrategy {
     }
 
     /**
+     * 志愿者抢单大厅排序（默认 timeCoin=0）。
+     * 委托 {@link #rankOrdersForVolunteer(List, Double, Double, int, int)} 执行。
+     */
+    public void rankOrdersForVolunteer(List<AvailableOrderVO> orders, Double volLon, Double volLat, int volCredit) {
+        rankOrdersForVolunteer(orders, volLon, volLat, volCredit, 0);
+    }
+
+    /**
      * 志愿者抢单大厅排序策略。
      *
      * 计算志愿者到各订单起点的接驾距离 (Haversine)，结合紧急度、信誉分及时间币，
@@ -91,9 +99,6 @@ public class MultiFactorDispatchStrategy {
      * @param volCredit 志愿者信誉分 (0-150)
      * @param timeCoin  志愿者时间币 (0-50)
      */
-    public void rankOrdersForVolunteer(List<AvailableOrderVO> orders, Double volLon, Double volLat, int volCredit) {
-        rankOrdersForVolunteer(orders, volLon, volLat, volCredit, 0);
-    }
 
     public void rankOrdersForVolunteer(List<AvailableOrderVO> orders, Double volLon, Double volLat, int volCredit, int timeCoin) {
         if (orders == null || orders.isEmpty() || volLon == null || volLat == null) {

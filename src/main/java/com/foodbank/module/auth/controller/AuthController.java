@@ -60,7 +60,7 @@ public class AuthController {
         }
         String code = String.format("%06d", new Random().nextInt(999999));
         stringRedisTemplate.opsForValue().set(redisKey, code, 5, TimeUnit.MINUTES);
-        log.info("📞 [模拟短信] 向手机号 {} 发送验证码: {}", phone, code);
+        log.info("[模拟短信] 手机号{} 验证码:{}", phone, code);
         return Result.success(code, "验证码发送成功");
     }
 
@@ -127,7 +127,7 @@ public class AuthController {
 
         // 🚨 核心修复 3：去除商家的特判，只要 status == 0，统统视为被管理员强制熔断/封禁
         if (user.getStatus() == 0) {
-            throw new BusinessException("该账号已被系统封禁或彻底熔断，请联系指挥中心处理");
+            throw new BusinessException("该账号已被封禁，请联系管理员");
         }
 
         if (user.getRole() < 1 || user.getRole() > 4) {

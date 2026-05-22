@@ -36,7 +36,7 @@ public class AuthInterceptor implements HandlerInterceptor {
 
         // 3. 校验格式：必须以 "Bearer " 开头
         if (!StringUtils.hasText(authHeader) || !authHeader.startsWith("Bearer ")) {
-            log.warn("🚨 非法访问：URI [{}] 未携带合法的 Authorization 报头", request.getRequestURI());
+            log.warn("[鉴权] URI[{}] 未携带Authorization", request.getRequestURI());
             throw new BusinessException(ResultCode.UNAUTHORIZED); //
         }
 
@@ -45,14 +45,14 @@ public class AuthInterceptor implements HandlerInterceptor {
         JwtUtils.TokenInfo tokenInfo = jwtUtils.validateTokenAndCheckRedis(token);
 
         if (tokenInfo == null || tokenInfo.userId == null) {
-            log.warn("⚠️ 鉴权失败：Token 已过期或无效，URI: {}", request.getRequestURI());
+            log.warn("[鉴权] Token无效 URI:{}", request.getRequestURI());
             throw new BusinessException(ResultCode.UNAUTHORIZED);
         }
 
         // 5. 🚀 身份与权限透传：挂载到当前线程上下文
         UserContext.setUserId(tokenInfo.userId);
         UserContext.setUserRole(tokenInfo.role); // 🚨 将角色同步放入上下文
-        log.info("✅ 鉴权通过：角色 [{}] 的用户 [{}] 正在访问 [{}]", tokenInfo.role, tokenInfo.userId, request.getRequestURI());
+        log.info("[鉴权] 通过 角色[{}] 用户[{}] URI[{}]", tokenInfo.role, tokenInfo.userId, request.getRequestURI());
 
         return true;
     }
@@ -65,6 +65,6 @@ public class AuthInterceptor implements HandlerInterceptor {
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
         // 请求结束后，务必清理 ThreadLocal
         UserContext.remove();
-        log.debug("🧹 线程上下文已清理：URI [{}]", request.getRequestURI());
+        log.debug("[ThreadLocal] 已清理 URI:{}", request.getRequestURI());
     }
 }

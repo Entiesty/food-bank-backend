@@ -41,7 +41,7 @@ public class OrderTaskConsumer {
             );
 
             if (!isGrabbed) {
-                log.warn("⚠️ MQ消费被丢弃：订单 {} 已非待接单状态（可能已被消费）", orderId);
+                log.warn("[MQ] 订单{} 已非待接单状态，丢弃", orderId);
                 return;
             }
 
@@ -53,7 +53,7 @@ public class OrderTaskConsumer {
             deliveryTask.setVersion(0);
             taskService.save(deliveryTask);
 
-            log.info("✅ MQ异步削峰落库完成：单号 {} 成功指派给骑士 {}", orderId, volunteerId);
+            log.info("[MQ] 单号{} 指派骑手{}", orderId, volunteerId);
 
             // 3. 通知前端大屏刷新
             DispatchOrder order = orderService.getById(orderId);
@@ -65,7 +65,7 @@ public class OrderTaskConsumer {
             }
 
         } catch (Exception e) {
-            log.error("❌ 消费抢单消息失败，数据：{}", message, e);
+            log.error("[MQ] 消费失败 数据:{}", message, e);
             // ✅ FIX-1: 异常回滚 — 将订单状态重置为0(待调度), 防止幽灵孤岛订单
             try {
                 Object oid = message.get("orderId");
@@ -74,10 +74,10 @@ public class OrderTaskConsumer {
                     orderService.update(new LambdaUpdateWrapper<DispatchOrder>()
                             .eq(DispatchOrder::getOrderId, orderId)
                             .set(DispatchOrder::getStatus, 0));
-                    log.info("🔄 系统自愈: 订单 {} 已回滚至待调度池", orderId);
+                    log.info("[回滚] 订单{} 已回滚至待调度池", orderId);
                 }
             } catch (Exception rollbackEx) {
-                log.error("💀 终极异常: 订单回滚也失败了, 需人工介入!", rollbackEx);
+                log.error("[严重] 回滚失败 需人工介入", rollbackEx);
             }
         }
     }

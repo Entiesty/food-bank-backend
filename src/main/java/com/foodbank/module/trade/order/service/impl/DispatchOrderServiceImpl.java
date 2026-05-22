@@ -295,13 +295,13 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             String[] volumeLabels = {"", "小件", "中件", "大件"};
             String cargoInfo = weightLabels[Math.min(wl, 3)] + " · " + volumeLabels[Math.min(vl, 3)];
             String urgentMsg = "{\"type\":\"URGENT_TASK_READY\"," +
-                "\"message\":\"🚨 紧急！周边商户已备好救命物资，急需骑士前往接力配送！\"," +
+                "\"message\":\"周边商户已备好援助物资，急需骑手前往配送！\"," +
                 "\"orderId\":\"" + dto.getOrderId() + "\"," +
                 "\"cargoInfo\":\"" + cargoInfo + "\"," +
                 "\"weightLevel\":" + wl + "," +
                 "\"volumeLevel\":" + vl + "}";
             WebSocketServer.broadcast(urgentMsg);
-            log.info("📡 全网骑手强推广播已发送, orderId={}, cargo={}", dto.getOrderId(), cargoInfo);
+            log.info("[广播] 骑手通知已发送 orderId={} cargo={}", dto.getOrderId(), cargoInfo);
         } catch (Exception e) {
             log.error("全网骑手强推广播失败, orderId={}", dto.getOrderId(), e);
         }
@@ -311,7 +311,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             java.util.Set<String> broadcastKeys = stringRedisTemplate.keys("EMERGENCY_BCAST:*:" + dto.getOrderId());
             if (broadcastKeys != null && !broadcastKeys.isEmpty()) {
                 stringRedisTemplate.delete(broadcastKeys);
-                log.info("🧹 订单 {} 已被商家 {} 响应，已清除 {} 条关联广播", dto.getOrderId(), merchantId, broadcastKeys.size());
+                log.info("[广播清理] 订单{} 商家{}响应 清除{}条", dto.getOrderId(), merchantId, broadcastKeys.size());
             }
         } catch (Exception e) {
             log.warn("清除广播缓存异常(非致命)", e);
@@ -330,7 +330,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             task.setTaskStatus((byte) 1);
             task.setVersion(0);
             taskService.save(task);
-            log.info("🚀 商家自配送模式已激活, orderId={}, merchantId={}", dto.getOrderId(), merchantId);
+            log.info("[自配送] orderId={} merchantId={}", dto.getOrderId(), merchantId);
         }
     }
 
@@ -349,7 +349,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         // ✅ FIX-2A: 守卫A — 应急模式物理隔离, 禁止自提
         if ("EMERGENCY".equals(config.getSysMode())
                 && dto.getDeliveryMethod() != null && dto.getDeliveryMethod() == 2) {
-            throw new BusinessException("🚨 应急响应期间严禁市民自行外出，已关闭自提通道，请使用紧急呼救申请上门配送！");
+            throw new BusinessException("应急响应期间已关闭自提通道，请使用上门配送");
         }
 
         // 守卫A2: 预约上门配送 → 空间匹配（平急模式均执行，平时无货拒绝，急时无货仅不绑定物资）
@@ -492,7 +492,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         if (dispatchOrder.getGoodsId() == null) {
             try {
                 dispatchEngineService.triggerEmergencyBroadcast(dispatchOrder.getOrderId());
-                log.info("🚨 SOS自动雷达已激活, 单号: {}", dispatchOrder.getOrderSn());
+                log.info("[SOS广播] 单号:{}", dispatchOrder.getOrderSn());
             } catch (Exception e) {
                 log.error("SOS自动雷达广播失败, 将降级为手动触发", e);
             }
@@ -621,7 +621,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
         }
         order.setDeliveryMethod((byte) 2);
         boolean updated = this.updateById(order);
-        if (!updated) throw new BusinessException("运力熔断触发失败，数据库更新异常");
+        if (!updated) throw new BusinessException("配送切换失败，数据库更新异常");
     }
 
     @Override
@@ -682,7 +682,7 @@ public class DispatchOrderServiceImpl extends ServiceImpl<DispatchOrderMapper, D
             java.util.Set<String> broadcastKeys = stringRedisTemplate.keys("EMERGENCY_BCAST:*:" + orderId);
             if (broadcastKeys != null && !broadcastKeys.isEmpty()) {
                 stringRedisTemplate.delete(broadcastKeys);
-                log.info("🧹 订单 {} 已取消，已清除 {} 条紧急广播缓存", orderId, broadcastKeys.size());
+                log.info("[广播清理] 订单{}已取消 清除{}条", orderId, broadcastKeys.size());
             }
         } catch (Exception e) {
             log.warn("清除紧急广播缓存异常(非致命) orderId={}", orderId, e);

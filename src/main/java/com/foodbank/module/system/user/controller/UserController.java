@@ -84,7 +84,7 @@ public class UserController {
         boolean success = userService.update(updateWrapper);
         if (!success) throw new BusinessException("资料更新失败，请重试");
 
-        return Result.success(null, "资料已保存至系统，并提交至风控审核队列！");
+        return Result.success(null, "资料已保存，等待审核");
     }
 
     @Operation(summary = "3. 修改密码")

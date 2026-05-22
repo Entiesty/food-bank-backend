@@ -104,7 +104,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         // 🛡️ 架构师防线 1：拦截乐观锁静默失败！
         boolean updateTaskSuccess = this.updateById(deliveryTask);
         if (!updateTaskSuccess) {
-            throw new BusinessException("🚨 任务状态已被其他终端修改，核销终止！");
+            throw new BusinessException("任务状态已被修改，核销终止");
         }
 
         // 3. 扭转订单状态与物资状态
@@ -121,7 +121,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                         // 【平时态】入库驿站
                         goods.setStatus((byte) 2); // 2-已入库
                         goods.setCurrentStationId(dispatchOrder.getDestId());
-                        log.info("📦 平时调度完成：物资 [{}] 已正式入库至驿站 ID:[{}]", goods.getGoodsName(), dispatchOrder.getDestId());
+                        log.info("[入库] 物资[{}] 入库驿站[{}]", goods.getGoodsName(), dispatchOrder.getDestId());
                     } else if (dispatchOrder.getOrderType() == 2) {
                         // 求助单送达：扣减已在发布时完成，根据剩余库存决定物资状态
                         if (goods.getStock() != null && goods.getStock() > 0) {
@@ -130,7 +130,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                             goods.setStatus((byte) 3); // 库存耗尽 → 标记已消耗
                             goods.setCurrentStationId(null);
                         }
-                        log.info("📦 求助单送达完成：物资 [{}] 剩余库存 {}", goods.getGoodsName(), goods.getStock());
+                        log.info("[送达] 物资[{}] 剩余库存{}", goods.getGoodsName(), goods.getStock());
                     }
                     goodsService.updateById(goods);
                 }
@@ -190,7 +190,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
         coinLog.setLogType((byte) 2);
         creditLogService.save(coinLog);
 
-        log.info("⏳ 时间银行: 骑士 [{}] 获得 {} 时间币", userId, coinReward);
+        log.info("[时间币] 骑手[{}] 获得{}时间币", userId, coinReward);
     }
 
     @Override
@@ -360,7 +360,7 @@ public class DeliveryTaskServiceImpl extends ServiceImpl<DeliveryTaskMapper, Del
                     .eq(User::getUserId, volunteerId)
                     .setSql("total_mileage = COALESCE(total_mileage, 0) + " + task.getActualDistance()));
 
-            log.info("⛽ 灾时补贴核算: 骑士[{}] 骑行{}km, 补贴{}元", volunteerId, task.getActualDistance(), subsidy);
+            log.info("[补贴] 骑手[{}] 骑行{}km 补贴{}元", volunteerId, task.getActualDistance(), subsidy);
         } else {
             task.setSubsidyStatus((byte) 0);
             task.setSubsidyAmount(BigDecimal.ZERO);

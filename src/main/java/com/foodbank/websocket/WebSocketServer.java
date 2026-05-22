@@ -18,13 +18,13 @@ public class WebSocketServer {
     @OnOpen
     public void onOpen(Session session, @PathParam("userId") Long userId) {
         sessionMap.put(userId, session);
-        log.info("📡 用户 [{}] 已接入调度通讯网络，当前全网在线人数: {}", userId, sessionMap.size());
+        log.info("[WebSocket] 用户[{}] 已连接 当前在线: {}", userId, sessionMap.size());
     }
 
     @OnClose
     public void onClose(@PathParam("userId") Long userId) {
         sessionMap.remove(userId);
-        log.info("📡 用户 [{}] 离开了通讯网络", userId);
+        log.info("[WebSocket] 用户[{}] 已断开", userId);
     }
 
     @OnError
@@ -52,12 +52,12 @@ public class WebSocketServer {
         if (session != null && session.isOpen()) {
             try {
                 session.getBasicRemote().sendText(message);
-                log.info("✅ 成功向用户 [{}] 推送紧急响应弹窗", userId);
+                log.info("[推送] 向用户[{}] 推送成功", userId);
             } catch (Exception e) {
                 log.error("推送消息给用户 [{}] 失败", userId, e);
             }
         } else {
-            log.warn("⚠️ 用户 [{}] 当前不在线，弹窗信号未能送达", userId);
+            log.warn("[推送] 用户[{}] 不在线，推送失败", userId);
         }
     }
 

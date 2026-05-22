@@ -76,10 +76,10 @@ public class DispatchOrderController {
     public Result<Void> switchOrderToPickup(@RequestParam Long orderId) {
         Byte role = UserContext.getUserRole();
         if (role != null && role != 4) {
-            throw new BusinessException("越权操作：仅指挥中心可触发运力熔断机制");
+            throw new BusinessException("越权操作：仅管理员可切换配送方式");
         }
         orderService.switchOrderToPickup(orderId);
-        return Result.success(null, "系统已成功触发熔断，订单转为自提模式");
+        return Result.success(null, "订单已切换为自提模式");
     }
 
     @Operation(summary = "全盘订单流转 (管理员视角)")

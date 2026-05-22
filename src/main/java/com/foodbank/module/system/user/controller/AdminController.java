@@ -66,7 +66,7 @@ public class AdminController {
                 .set(User::getStatus, newStatus)
                 .set(User::getIsVerified, newVerified));
 
-        return Result.success(pass == 1 ? "✅ 已通过该商家的入驻申请" : "❌ 已驳回该商家的入驻申请");
+        return Result.success(pass == 1 ? "已通过该商家的入驻申请" : "已驳回该商家的入驻申请");
     }
 
     // ================== 2. 全域用户治理模块 (三维治理核心) ==================
@@ -107,7 +107,7 @@ public class AdminController {
                 .set(User::getIsVerified, isVerified));
 
         if (!success) throw new BusinessException("标签更新失败");
-        return Result.success(null, "身份标签与核验状态已更新，该受赠方已获得算法调度特权！");
+        return Result.success(null, "身份标签与核验状态已更新");
     }
 
     @Operation(summary = "5. 志愿者：信誉分人工干预", description = "处理投诉或表彰时的后台加减分，仅限骑士角色")
@@ -135,6 +135,6 @@ public class AdminController {
     public Result<Void> evictUser(@PathVariable Long userId) {
         checkAdminPermission();
         userService.evictUser(userId);
-        return Result.success(null, "强制清退执行成功！该账号已被封禁，其名下未完成的业务已全线熔断。");
+        return Result.success(null, "强制清退执行成功，其名下未完成的业务已取消");
     }
 }

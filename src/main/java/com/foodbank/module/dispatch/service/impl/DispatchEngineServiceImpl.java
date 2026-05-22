@@ -114,7 +114,7 @@ public class DispatchEngineServiceImpl {
                 // 将商家映射为虚拟站点 (负ID)，复用现有骑士履约闭环而不修改表结构
                 Station fakeStation = new Station();
                 fakeStation.setStationId(-merchant.getUserId());
-                fakeStation.setStationName(merchant.getUsername() + “ (P2P直达)”);
+                fakeStation.setStationName(merchant.getUsername() + " (P2P直达)");
                 fakeStation.setLongitude(merchant.getCurrentLon());
                 fakeStation.setLatitude(merchant.getCurrentLat());
                 fakeStation.setAddress("点对点直达配送");

@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
- * 全局异常处理 - 最终完美版
+ * 全局异常处理
  */
 @Slf4j
 @RestControllerAdvice
@@ -22,7 +22,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(value = BusinessException.class)
     public Result<?> handleBusinessException(BusinessException e) {
-        log.warn("🚨 业务逻辑拦截: {}", e.getMessage());
+        log.warn("[业务拦截] {}", e.getMessage());
 
         // 如果异常自带了具体的枚举码，提取它的 code，但强制使用我们自定义的 message
         if (e.getResultCode() != null) {
@@ -38,7 +38,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(NoResourceFoundException.class)
     public Result<?> handleNotFoundException(NoResourceFoundException e) {
-        log.warn("🧭 访问路径不存在: {}", e.getResourcePath());
+        log.warn("[404] {}", e.getResourcePath());
         return Result.failed(404, "请求路径不存在，请检查接口地址是否正确", null);
     }
 
@@ -55,7 +55,7 @@ public class GlobalExceptionHandler {
             FieldError fieldError = ex.getBindingResult().getFieldError();
             if (fieldError != null) message = fieldError.getDefaultMessage();
         }
-        log.warn("📋 参数格式错误: {}", message);
+        log.warn("[参数错误] {}", message);
         return Result.failed(ResultCode.VALIDATE_FAILED.getCode(), message, null);
     }
 
@@ -64,7 +64,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(value = Exception.class)
     public Result<?> handleException(Exception e) {
-        log.error("🔥 系统异常: {}", e.getMessage(), e);
+        log.error("[系统异常] {}", e.getMessage(), e);
         return Result.failed(ResultCode.FAILED.getCode(), e.getMessage());
     }
 }
