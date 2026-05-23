@@ -25,10 +25,6 @@ public class ConfigUpdateDTO {
     @JsonProperty("wCredit")
     private BigDecimal wCredit;
 
-    @NotNull(message = "标签权重不能为空")
-    @JsonProperty("wTag")
-    private BigDecimal wTag;
-
     @JsonProperty("wExpiration")
     private BigDecimal wExpiration;
 

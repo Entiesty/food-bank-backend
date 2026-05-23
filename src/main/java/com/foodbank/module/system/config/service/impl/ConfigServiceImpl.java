@@ -44,22 +44,20 @@ public class ConfigServiceImpl extends ServiceImpl<ConfigMapper, Config> impleme
         BigDecimal wDist = dto.getWDist() != null ? dto.getWDist() : config.getWDist();
         BigDecimal wUrgency = dto.getWUrgency() != null ? dto.getWUrgency() : config.getWUrgency();
         BigDecimal wCredit = dto.getWCredit() != null ? dto.getWCredit() : config.getWCredit();
-        BigDecimal wTag = dto.getWTag() != null ? dto.getWTag() : config.getWTag();
         BigDecimal wExpiration = dto.getWExpiration() != null ? dto.getWExpiration() : config.getWExpiration();
         BigDecimal wStock = dto.getWStock() != null ? dto.getWStock() : config.getWStock();
 
-        BigDecimal total = wDist.add(wUrgency).add(wCredit).add(wTag).add(wExpiration).add(wStock);
+        BigDecimal total = wDist.add(wUrgency).add(wCredit).add(wExpiration).add(wStock);
         if (total.compareTo(new BigDecimal("1.00")) != 0) {
-            throw new BusinessException("参数错误：六维权重总和必须等于 1.00 (当前=" + total + ")");
+            throw new BusinessException("参数错误：五维权重总和必须等于 1.00 (当前=" + total + ")");
         }
 
-        // wTimeCoin is independent of the six-factor sum (volunteer-only bonus)
+        // wTimeCoin 独立于五维体系，仅在志愿者抢单路径生效
         if (dto.getWTimeCoin() != null) config.setWTimeCoin(dto.getWTimeCoin());
 
         config.setWDist(wDist);
         config.setWUrgency(wUrgency);
         config.setWCredit(wCredit);
-        config.setWTag(wTag);
         config.setWExpiration(wExpiration);
         config.setWStock(wStock);
         if (dto.getSysMode() != null) config.setSysMode(dto.getSysMode());
@@ -99,26 +97,24 @@ public class ConfigServiceImpl extends ServiceImpl<ConfigMapper, Config> impleme
     }
 
     /**
-     * SAW 六维权重预设。
-     * NORMAL: 距离优先 (wDist=0.35)，EMERGENCY: 紧急度优先 (wUrgency=0.45)。
-     * 六维之和恒为 1.00；wTimeCoin 独立于六维体系，仅在志愿者抢单路径生效。
+     * SAW 五维权重预设。
+     * NORMAL: 距离优先 (wDist=0.50)，EMERGENCY: 紧急度优先 (wUrgency=0.70)。
+     * 五维之和恒为 1.00；wTimeCoin 独立于五维体系，仅在志愿者抢单路径生效。
      */
     private void applyPresetWeights(Config config, String mode) {
         switch (mode) {
             case "NORMAL":
-                config.setWDist(new BigDecimal("0.35"));
+                config.setWDist(new BigDecimal("0.50"));
                 config.setWUrgency(new BigDecimal("0.20"));
                 config.setWCredit(new BigDecimal("0.15"));
-                config.setWTag(new BigDecimal("0.15"));
                 config.setWExpiration(new BigDecimal("0.10"));
                 config.setWStock(new BigDecimal("0.05"));
                 config.setWTimeCoin(new BigDecimal("0.05"));
                 break;
             case "EMERGENCY":
                 config.setWDist(new BigDecimal("0.10"));
-                config.setWUrgency(new BigDecimal("0.45"));
+                config.setWUrgency(new BigDecimal("0.70"));
                 config.setWCredit(new BigDecimal("0.05"));
-                config.setWTag(new BigDecimal("0.25"));
                 config.setWExpiration(new BigDecimal("0.05"));
                 config.setWStock(new BigDecimal("0.10"));
                 config.setWTimeCoin(new BigDecimal("0.15"));

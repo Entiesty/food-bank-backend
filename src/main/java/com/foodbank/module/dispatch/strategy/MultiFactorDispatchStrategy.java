@@ -22,7 +22,6 @@ import java.util.List;
  *   <li>{@code wDist}       — 距离权重：距离越近得分越高（反向归一化）</li>
  *   <li>{@code wUrgency}    — 紧急度权重：订单紧急程度对得分的加成比例</li>
  *   <li>{@code wCredit}     — 信誉分权重：仅用于志愿者抢单大厅排序</li>
- *   <li>{@code wTag}        — 标签匹配权重：Jaccard 相似度加权项（由上游调用方计算后注入）</li>
  *   <li>{@code wExpiration} — 临期优先权重：越临近过期的物资得分越高，优先消耗</li>
  *   <li>{@code wStock}      — 库存充裕权重：库存越充裕的驿站得分越高</li>
  * </ul>

@@ -35,10 +35,6 @@ public class Config {
     @Schema(description = "多因子权重-骑手信誉偏好")
     private BigDecimal wCredit;
 
-    @JsonProperty("wTag")
-    @Schema(description = "多因子权重-弱势群体身份偏好")
-    private BigDecimal wTag;
-
     @JsonProperty("wExpiration")
     @Schema(description = "多因子权重-物资临期偏好(FEFO)")
     private BigDecimal wExpiration;
