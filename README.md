@@ -248,24 +248,13 @@ $d = R \times c$ （R = 6371 km，地球平均半径）
 系统使用 `window.dispatchEvent(CustomEvent)` 实现跨组件通信，不引入额外依赖：
 
 | 事件名 | 派发者 | 监听者（响应行为） |
-| --- | --- | --- |
-| `mode-changed` | `App.vue` (WS) | `SideMenu`、`ElderlySOS`、`dispatch`<br>
-
-<br>`FoodBankMarket`、`AlgorithmConfig`<br>
-
-<br>`MerchantDonate`、`EmergencyRadar` |
-| `audit-status-changed` | `App.vue` + `ProfileSetting` | `SideMenu`、`ElderlySOS`、`dispatch`<br>
-
-<br>`AdminReview`、`ProfileSetting` |
+| :--- | :--- | :--- |
+| `mode-changed` | `App.vue` (WS) | `SideMenu`、`ElderlySOS`、`dispatch`<br>`FoodBankMarket`、`AlgorithmConfig`<br>`MerchantDonate`、`EmergencyRadar` |
+| `audit-status-changed` | `App.vue` + `ProfileSetting` | `SideMenu`、`ElderlySOS`、`dispatch`<br>`AdminReview`、`ProfileSetting` |
 | `user-info-updated` | `ProfileSetting` | `SideMenu`（同步 `deliveryType` 等） |
-| `refresh-orders` | `App.vue` (WS) | `OrderFlow`、`AdminReview`<br>
-
-<br>`MerchantHistory`、`FoodBankMarket`<br>
-
-<br>`dispatch/index` |
+| `refresh-orders` | `App.vue` (WS) | `OrderFlow`、`AdminReview`<br>`MerchantHistory`、`FoodBankMarket`<br>`dispatch/index` |
 
 **规范约束**：
-
 * 所有 `addEventListener` 必须在 `onUnmounted` 中 `removeEventListener`
 * 监听器必须提取为命名函数引用，禁止匿名函数
 * 不在多处修改同一状态 —— 保持 WebSocket 驱动的单一数据源
