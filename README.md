@@ -1,365 +1,417 @@
-# 食物银行后端调度系统 (Food Bank Backend)
+# 暖心食光 (Heartwarming Food Bank) —— 城市食品银行智能调度与应急救援前端平台
 
-基于 LBS 与多因子决策的社区"食物银行"智能调度系统，为灾备应急场景下的物资匹配、志愿者抢单与实时通信提供高并发后端支撑。
+## 项目概览
 
----
-
-## 技术栈
-
-| 组件              | 版本                           | 用途                             |
-| ----------------- | ------------------------------ | -------------------------------- |
-| Java              | 21 (Virtual Threads)           | 核心语言                         |
-| Spring Boot       | 3.4.5                          | 应用框架                         |
-| MyBatis-Plus      | 3.5.10.1                       | ORM（分页插件 + 乐观锁插件）     |
-| Redisson          | 4.3.0                          | 分布式锁（抢单临界区保护）       |
-| RabbitMQ          | 4.0 (spring-boot-starter-amqp) | 消息队列（异步落库解耦）         |
-| WebSocket         | jakarta.websocket (原生)       | 实时双向通信                     |
-| Redis             | spring-boot-starter-data-redis | 缓存 / GEO 空间索引 / 分布式计数 |
-| MySQL             | 8.4 LTS                        | 关系型数据库                     |
-| JWT               | jjwt 0.12.5                    | 无状态鉴权                       |
-| MinIO             | 8.5.7                          | 对象存储（替代阿里云 OSS）       |
-| SpringDoc OpenAPI | 2.8.5                          | Swagger 接口文档                 |
-| FreeMarker        | 2.3.32                         | 代码生成器模板引擎               |
-| 高德地图 API      | HTTP 外部调用                  | 骑行路线规划 / 实时测距          |
-
-本项目为 **Spring Boot 单体和模块化 DDD 分层架构**。
+暖心食光是一个基于 Vue 3 + TypeScript + Vite 构建的现代化单页应用（SPA），专为城市社区食品银行及应急救援物资调度场景设计。平台覆盖从受赠方紧急求助、商家物资捐赠、骑手抢单配送到指挥中心全局管控的完整业务闭环。
 
 ---
 
-## 项目架构（DDD 四层分层）
+## 一、核心依赖与系统入口
 
-```
-com.foodbank
-├── FoodBankBackendApplication.java        # 启动入口 (@EnableScheduling)
-│
-├── common/                                 # 基础设施层
-│   ├── api/                                 # 统一响应 Result<T> + ResultCode 枚举
-│   ├── exception/                           # BusinessException + GlobalExceptionHandler
-│   ├── constant/                            # Redis Key 常量
-│   └── utils/                               # JwtUtils, UserContext (ThreadLocal)
-│
-├── config/                                  # 全局配置
-│   ├── CorsConfig / JacksonConfig / WebMvcConfig
-│   ├── MyBatisPlusConfig (分页 + 乐观锁)
-│   ├── RabbitMQConfig (DirectExchange + Queue + Binding)
-│   ├── RedissonConfig (单机模式)
-│   └── OpenApiConfig (Swagger)
-│
-├── websocket/                               # WebSocket 实时通信层
-│   ├── WebSocketConfig (ServerEndpointExporter)
-│   └── WebSocketServer (@ServerEndpoint "/ws/sos/{userId}")
-│
-├── module/                                  # 业务模块（领域层 + 应用层）
-│   ├── auth/          # 认证模块（注册/登录/验证码/JWT 鉴权拦截器）
-│   ├── dispatch/      # ★ 调度引擎核心（匹配、抢单、广播、定时撮合）
-│   ├── resource/      # 资源模块（物资 goods + 驿站 station + Redis GEO）
-│   ├── trade/         # 交易模块（订单 order + 配送任务 task + MQ 消费者）
-│   └── system/        # 系统模块（用户 user + 配置 config + 文件上传）
-│
-└── runner/                                  # 启动 Banner 打印
-```
+### 1.1 技术栈总览
 
----
+* **核心框架**: Vue 3.5.25（严格 Composition API + `<script setup>`）
+* **类型系统**: TypeScript 5.9.3
+* **构建工具**: Vite 7.3.1
+* **状态管理**: Pinia 3.0.4
+* **路由管理**: Vue Router 4.6.4
+* **UI 组件库**: Element Plus 2.13.2
+* **地图引擎**: 高德地图 JSAPI 2.0（`@amap/amap-jsapi-loader`）
+* **可视化图表**: ECharts 6.0
+* **HTTP 客户端**: Axios 1.13.5
+* **实时通信**: 浏览器原生 WebSocket API
 
-## 核心调度引擎
+### 1.2 系统入口与启动流程
 
-### 两级降级寻源链路
+* **入口文件**: `src/main.ts`
+↓ `createApp(App)` → `use(router)` → `use(createPinia())` → `use(ElementPlus)` → `mount('#app')`
+* **路由入口**: `src/router/index.ts`
+* 采用 `createWebHistory` 模式
+* 21 条路由，全部懒加载（`() => import(...)`）
+* 路由守卫 `beforeEach` 中进行前端 RBAC 权限拦截（`localStorage userRole` + `meta.roles`）
 
-系统采用 **L0 → L1 两级降级** 物资寻源策略：
 
-```
-L0: P2P 直达（商家主动供给）
-  │ 检索商家已响应的直供订单，虚拟化为负 ID 驿站
-  │ 标签硬过滤（Jaccard 交集为空直接丢弃）
-  │ 距离硬阈值 50km（超出直接剪枝）
-  │ 命中 → 短路返回，跳过 L1
-  ↓ 无匹配时降级
-L1: Hub-and-Spoke 驿站中转
-  │ Redis GEO GEORADIUS 命令，50km 半径检索驿站
-  │ 逐站查询可用物资（品类匹配 + 模式过滤）
-  │ 标签 Jaccard 相似度加分（非硬过滤，保证召回率）
-  │ 调用高德骑行 API 计算实际配送距离/耗时
-  ↓ 仍无匹配时
-紧急广播三级扩散（10km → 30km → 全城） / 商家募捐兜底
-```
+* **全局布局**: `src/App.vue`
+* `SideMenu`（侧边导航栏）仅在非 `/auth` 页面显示
+* `keep-alive` 缓存 `AdminReview` 组件
+* 页面切换动画（`page-enter` / `page-leave` transition）
 
-### 多因子 SAW 决策算法（Min-Max 归一化 + 加权求和）
 
-#### 系统端自动指派（四维评分）
-
-对候选驿站/物资执行 Min-Max 归一化，消除异构量纲差异后加权求和：
-
-| 维度   | 原始指标            | 归一化方向                        | 权重 (NORMAL) | 权重 (EMERGENCY) |
-| ------ | ------------------- | --------------------------------- | ------------- | ---------------- |
-| 距离   | 骑行米数 (高德 API) | 反向 `(max-x)/range` — 越近越高   | 0.50          | 0.10             |
-| 库存   | 物资件数            | 正向 `(x-min)/range` — 越多越高   | 0.05          | 0.10             |
-| 临期   | 过期时间戳 (秒)     | 反向 `(max-x)/range` — 越临期越高 | 0.10          | 0.05             |
-| 紧急度 | 订单紧急等级 [1,10] | 全局归一化 `urgency/10.0`         | 0.20          | 0.70             |
-
-**应急枢纽加成**：当 `urgencyLevel ≥ 8` 且站点 `isEmergencyHub = 1` 时，附加 `+1.0` emergencyBonus，在 EMERGENCY 模式下（wUrgency=0.70）可将应急枢纽得分提升 0.7 以上，确保应急物资优先从枢纽调配。
-
-**SAW 综合得分公式**：
-
-```
-finalScore = normDist × wDist + normStock × wStock + normExpiration × wExpiration + (normUrgency + emergencyBonus) × wUrgency
-```
-
-#### 志愿者抢单大厅（四维千人千面排序）
-
-| 维度       | 归一化方式                                  | 说明                     |
-| ---------- | ------------------------------------------- | ------------------------ |
-| 接驾距离   | 反向 Min-Max，坐标缺失→哨兵值 999km→赋 0 分 | 越近越优先               |
-| 订单紧急度 | `urgencyLevel / 10.0`                       | 高分订单前置             |
-| 信誉分     | `min(creditScore/150, 1.0)`                 | 上限 150，激励高质量服务 |
-| 时间币     | `min(timeCoin/50, 1.0)`                     | 上限 50，奖励长期服务    |
-
-#### 运行时权重热更新
-
-六维权重（`wDist`, `wUrgency`, `wCredit`, `wExpiration`, `wStock`, `wTimeCoin`）存储在 `sys_config` 表中，通过 `ConfigController` 的 REST API 实时修改，调度策略在每次计算时从数据库读取最新值，**无需重启服务**。系统内置 NORMAL/EMERGENCY 两套预设，支持一键切换。
 
 ---
 
-## 实时通信 — WebSocket 灾备高并发底层机制
+## 二、角色体系与权限模型（RBAC）
 
-### 架构设计
+平台定义四种角色，通过路由 `meta.roles` 与 `localStorage userRole` 实现前端拦截：
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  前端 (指挥中心大屏 / 志愿者 App / 商家终端)                │
-│    │  WebSocket 连接 ws://host:8080/api/ws/sos/{userId}    │
-└────┼──────────────────────────────────────────────────────┘
-     │
-┌────▼──────────────────────────────────────────────────────┐
-│  WebSocketServer (@ServerEndpoint)                        │
-│  ├─ ConcurrentHashMap<Long, Session> sessionMap           │
-│  │  线程安全的在线用户会话注册表                              │
-│  ├─ @OnOpen  → sessionMap.put(userId, session)            │
-│  ├─ @OnClose → sessionMap.remove(userId)                  │
-│  ├─ @OnError → log.error()                                │
-│  └─ @OnMessage → PING/PONG 心跳防断连                       │
-│                                                           │
-│  核心 API:                                                 │
-│  ├─ sendMessageToUser(userId, msg) — 点对点推送             │
-│  │  向受助方实时推送 SOS 响应/物资匹配结果                    │
-│  └─ broadcast(msg) — 全网广播                              │
-│     向大屏推送实时指标/订单状态变更/异常报警                   │
-└──────────────────────────────────────────────────────────┘
-```
+* **Role 1 — 受赠方（Recipient）**：求助发布、履约追踪、食物银行自助提取、历史档案
+* **Role 2 — 商家（Merchant）**：物资捐赠、历史记录、应急雷达响应、CSR 社会责任看板
+* **Role 3 — 骑手/志愿者（Rider/Volunteer）**：抢单大厅、任务执行、信誉中心
+* **Role 4 — 管理员/指挥中心（Admin）**：全局调度大屏、订单流转、算法配置、用户审核、站点管理、异常监控
 
-### 性能优化措施
+**审核冻结机制**：
 
-1. **ConcurrentHashMap 会话管理**：`ConcurrentHashMap<Long, Session>` 确保多线程并发读写在线用户表时的线程安全，避免 `HashMap` 在扩容时产生死循环或数据丢失。读操作不加锁，写操作仅锁分段（JDK 内部 CAS + synchronized），支撑大规模并发连接。
-
-2. **心跳 PING/PONG 机制**：前端定时发送 `{"type":"PING"}`，服务端回复 `{"type":"PONG"}`，防止 NAT 路由器/防火墙因长时间无数据交互而静默断开 WebSocket 连接（典型 NAT 超时 30s-120s）。
-
-3. **非阻塞广播**：`broadcast()` 方法遍历 `sessionMap` 同步发送，在会话数较少（通常数百以内）时保持低延迟；若需万级并发广播，可通过 RabbitMQ Fanout Exchange 将广播消息异步分发至水平扩展的多个 WebSocket 节点。
-
-4. **异常隔离**：单条推送失败（如某用户突然断连但未触发 @OnClose）仅记录日志，不影响同批次其他用户的推送。
-
-### 消息推送场景
-
-| 场景          | 推送方式        | 触发时机                   |
-| ------------- | --------------- | -------------------------- |
-| SOS 响应通知  | 点对点 → 受助方 | 商家/驿站匹配成功后        |
-| 模式切换广播  | 全网广播        | NORMAL ↔ EMERGENCY 切换    |
-| 新订单通知    | 全网广播        | 受助方发布新求助           |
-| 订单取消/变更 | 点对点          | 订单状态变更               |
-| 骑手任务通知  | 点对点          | 配送任务分配/完成          |
-| 异常监控告警  | 全网广播 → 大屏 | 零库存 / 订单滞留超 3 分钟 |
+* `isVerified === 0` 时，受赠方四张求助卡片变灰不可点击，展示红色冻结横幅。
+* 骑手调度大屏显示锁屏遮罩，需等待指挥中心审核通过。
+* 例外：`/volunteer/profile`（个人中心）始终可访问，供用户上传审核凭证。
 
 ---
 
-## 分布式并发控制
+## 三、WebSocket 实时通信机制
 
-### Redisson 分布式抢单锁
+### 3.1 架构设计
 
-```java
-// 模板：tryLock(waitTime=2s, leaseTime=10s, TimeUnit.SECONDS)
-RLock lock = redissonClient.getLock("lock:order:grab:" + orderId);
-try {
-    boolean isLocked = lock.tryLock(2, 10, TimeUnit.SECONDS);
-    if (!isLocked) throw new BusinessException("抢单人数过多，请重试");
-    // ① Double Check 订单状态（防止锁等待期间被他人领取）
-    // ② CVRP 载具容量约束校验（体积/重量累计点值）
-    // ③ RabbitMQ 异步落库
-} finally {
-    if (lock.isHeldByCurrentThread()) lock.unlock();
-}
-```
+`App.vue` 中建立全局 WebSocket 单例，连接至后端：
+`ws://localhost:8080/api/ws/sos/${userId}`
 
-**关键设计**：
+采用"单一数据源 + 事件总线"模式：
+WebSocket 消息 → `App.vue` 解析 → `window.dispatchEvent(CustomEvent)` → 各页面组件监听
 
-- 锁粒度为**单个订单**（`lock:order:grab:{orderId}`），而非全局锁，避免不相关订单的争用。
-- `isHeldByCurrentThread()` 安全释放：Redisson WatchDog 在 10s TTL 到期自动回收锁后，`finally` 块如不判断就直接 `unlock()` 会误删其他线程持有的新锁。
-- `tryLock` 而非 `lock`：避免线程无限阻塞，超时即返回提示用户重试。
+### 3.2 消息类型与事件映射
 
-### MyBatis-Plus 乐观锁防超卖
+| WebSocket type | 触发动作 | 派发的 CustomEvent |
+| --- | --- | --- |
+| `MODE_CHANGED` | 全局平急模式切换 | `mode-changed` |
+| `NEW_SOS` | 紧急呼救（骑士+管理员） | `refresh-orders` |
+| `NEW_REQ` | 常规流转单（骑士+管理员） | `refresh-orders` |
+| `ORDER_TAKEN` | 订单已被抢单 | `refresh-orders` |
+| `DELIVERED` | 物资已送达 | `refresh-orders` |
+| `SOS_RESPONDED` | SOS已被商家响应 | `refresh-orders` |
+| `ORDER_CANCELLED` | 订单被撤销（受赠方） | `refresh-orders` |
+| `AUDIT_PASSED` | 资质审核通过 | `audit-status-changed` |
+| `AUDIT_REJECTED` | 资质审核驳回 | `audit-status-changed` |
+| `URGENT_TASK_READY` | P2P 天降神兵 | `ElMessageBox.confirm` 强弹窗 |
 
-```java
-// 严禁先查后改！使用 LambdaUpdateWrapper 的条件更新兜底
-boolean success = goodsMapper.update(null,
-    new LambdaUpdateWrapper<Goods>()
-        .eq(Goods::getGoodsId, goodsId)
-        .ge(Goods::getStock, num)          // 乐观锁条件：库存 ≥ 扣减量
-        .setSql("stock = stock - " + num)  // 原子更新
-);
-```
+### 3.3 可靠性保障
 
-### Redis SETNX 防重放/防抖锁
+* **心跳保活**：每 30 秒发送 `{"type":"PING"}`，防止 NAT/防火墙静默断连。
+* **断线重连**：`onclose` 触发 5 秒后自动重连。
+* **状态追赶**：重连后立即调用 `getCurrentConfig()` 拉取最新 `sysMode`，检测掉线期间模式变更并追赶同步。
+* **防抖保护**：`refresh-orders` 监听器内置 300ms 防抖，避免 WebSocket 消息洪峰引发刷屏。
 
-```java
-// 紧急广播防抖：30s TTL，防止管理员短时间重复触发造成商家消息轰炸
-Boolean isLocked = stringRedisTemplate.opsForValue()
-    .setIfAbsent("LOCK:BROADCAST:" + orderId, "1", 30, TimeUnit.SECONDS);
-```
+### 3.4 骑手 P2P 紧急任务通知的拦截逻辑
+
+当收到 `URGENT_TASK_READY` 时，对骑手实施三级拦截：
+
+1. **状态互斥**：`riderStatus === 'BUSY'` 时降级为温和通知。
+2. **CVRP 运力硬约束**：`weightLevel >= 3` 或 `volumeLevel >= 3` 且 `vehicleType < 3`（步行/单车），直接屏蔽。
+3. **通过全部拦截** → `ElMessageBox.confirm` 强制弹窗，引导导航至调度大屏。
 
 ---
 
-## RabbitMQ 异步削峰
+## 四、智能调度系统与 SAW 多因子权重算法
 
-### 架构
+### 4.1 双轨状态机
 
-```
-抢单请求 ──→ [Redisson 分布式锁] ──→ [CVRP 校验通过]
-                                          │
-                          RabbitTemplate.convertAndSend()
-                                          │
-                                   ┌──────▼───────┐
-                                   │ DirectExchange │
-                                   │ dispatch.order  │
-                                   └──────┬───────┘
-                                          │ routingKey: grab.order
-                                   ┌──────▼──────────┐
-                                   │ grab.order.queue  │
-                                   └──────┬──────────┘
-                                          │
-                              OrderTaskConsumer (@RabbitListener)
-                                          │
-                              @Transactional + 乐观锁条件更新
-                                          │
-                              订单状态跃迁 → 生成配送任务 → WebSocket 广播
-```
+系统在两种模式下运行完全不同的调度策略：
 
-**关键保障**：
+| 维度 | NORMAL（常态模式） | EMERGENCY（应急模式） |
+| --- | --- | --- |
+| **物流拓扑** | Hub & Spoke 驿站中转 | P2P 直达优先 |
+| **核心权重** | `wDist` = 50%（距离优先） | `wUrgency` = 70%（紧急度优先） |
+| **配给制** | 无限制，自由流通 | 配给制 + 防挤兑 |
+| **LBS 广播** | 关闭 | 自动激活周边商铺定向紧急募捐广播 |
+| **自提通道** | 开放（`FoodBankMarket`） | 关闭，全部强制配送 |
 
-- 消费端加 `@Transactional`：防止消息丢失（事务回滚后消息重新入队）。
-- 异常只记日志、不向上抛出：避免 `AmqpRejectAndDontRequeueException` 未配置导致的死循环重试。
-- 解耦效果：抢单 API 响应时延仅包含锁获取 + CVRP 校验 + MQ 投递，数据库写入在消费端异步完成，峰值吞吐显著提升。
+**模式切换流程**：
+管理员 API 请求 → 后端更新数据库 → 后端 WebSocket 广播 `MODE_CHANGED` → 前端同步更新 `localStorage sysMode` + 全局通知 → 各页面联动响应
 
----
+### 4.2 SAW（Simple Additive Weighting）五维权重归一化
 
-## 定时自愈机制
+调度引擎使用加性加权模型计算每个候选驿站/骑手的综合得分，`AlgorithmConfig.vue` 提供五维滑块面板：
 
-### 自动撮合引擎 (`@Scheduled fixedDelay=5000`)
+**五维因子及其默认配置（常态模式）**：
 
-每 5 秒扫描 `status=0` 且 `orderType=2` 的待匹配 SOS/REQ 订单，自动调用 `smartMatchStations` 执行 L0→L1 寻源并原子扣减库存。每条记录独立 `try-catch`，单条异常不影响其余订单处理。
+| 因子 | 权重 | 含义 |
+| --- | --- | --- |
+| `wDist` | 50% | LBS 空间距离 —— 骑手/驿站到求助点的物理距离 |
+| `wUrgency` | 20% | 订单紧急度 —— 求助优先级（医疗 10 / 应急 9) |
+| `wCredit` | 15% | 志愿者信誉加权 —— 历史评分与准时率 |
+| `wExpiration` | 10% | 物资临期偏好（FEFO）—— 优先出库临期物资 |
+| `wStock` | 5% | 据点库存偏好 —— 库存水位均衡 |
 
-### 异常订单监控 (`@Scheduled cron="0 * * * * ?"`)
+**归一化约束**：
 
-仅 EMERGENCY 模式下每分钟检测：
+* 五维权重之和 STRICTLY = 100%（前端滑块 step = 5%，实时校验）
+* 向后端提交时，权重值除以 100，以小数形式存储（如 `wDist: 0.50`）
+* 模式切换时自动拉取预设权重；也支持管理员手动微调后热更新
 
-- **零库存告警**：品类库存耗尽时标记异常原因
-- **滞留告警**：订单创建超过 3 分钟仍未匹配时标记
-- **自愈恢复**：库存恢复或订单被接单后自动清除异常标记
+### 4.3 LBS 空间距离计算（Haversine 公式）
 
----
+前端内置 Haversine 公式进行球面距离计算（`src/views/dispatch/index.vue:147-156`）：
 
-## 距离计算与空间索引
+$a = \sin^2(\Delta lat/2) + \cos(lat1) \times \cos(lat2) \times \sin^2(\Delta lon/2)$
+$c = 2 \times \text{atan2}(\sqrt{a}, \sqrt{1-a})$
+$d = R \times c$ （R = 6371 km，地球平均半径）
 
-### Haversine 球面距离公式
+**坐标安全校验**：
 
-作为高德骑行 API 的降级方案，将地球建模为标准球体（半径 6371 km），计算任意两点间的大圆距离：
+* `isValidCoord()`：检查非空、非 NaN、isfinite
+* `safeCoord()`：多层降级链（GPS → 数据库档案坐标 → GEO_FALLBACK）
+* **GEO_FALLBACK**：`[118.092000, 24.623500]`（厦门集美区默认中心点）
+* **漂移保护**：骑手 GPS 偏离集美区中心超过 5° 时自动降级
 
-```
-a = sin²(Δlat/2) + cos(lat1)·cos(lat2)·sin²(Δlon/2)
-c = 2·atan2(√a, √(1-a))
-distance = R × c   (单位: km)
-```
+### 4.4 调度流程三通道
 
-短距离（50km 内）误差约 0.3%，满足调度粗排需求。
+`fetchMapOrders()` 拉取待处理订单后，根据订单特征走三条通道：
 
-### Redis GEO 空间索引
+* **通道一：捐赠直达（Donation Dispatch）**
+* 触发条件：`orderType === 1`（定向捐赠）
+* 行为：跳过 SAW 驿站匹配，直接生成骑手→捐赠商铺→社区驿站的回收路线
 
-驿站坐标在服务启动时自动预热至 Redis GEO 集合（`StationGeoServiceImpl`），系统运行时通过 `GEORADIUS` 命令以受助方坐标为中心检索 50km 半径内的最近驿站，结合高德骑行 API 获取实时路线距离。
 
----
+* **通道二：P2P 已响应（P2P Dispatch）**
+* 触发条件：`sourceId` 存在且 `sourceLon`/`sourceLat` 坐标合法
+* 行为：商家已确认备货，直接生成骑手→商家取货点→求助市民的三点接驾路线
 
-## CVRP 载具容量约束
 
-抢单前对志愿者的运力进行双重校验：
+* **通道三：SAW 智能匹配（Smart Dispatch）**
+* 触发条件：无预设取货源，需要算法匹配最近驿站
+* 调用 API：`POST /dispatch/smart-match`
+* 入参：`targetLon, targetLat, requiredCategory, urgencyLevel, requiredTags, deliveryMethod`
+* 降级行为：若匹配结果为空，提示"附近暂无满足条件的驿站物资，将尝试商家募捐"
 
-| 载具类型         | 体积上限 | 重量上限 | 跨区限制 |
-| ---------------- | -------- | -------- | -------- |
-| 步行 (vType=1)   | 2 点     | 2 点     | ≤ 50km   |
-| 单车 (vType=2)   | 5 点     | 4 点     | ≤ 50km   |
-| 电动车 (vType=3) | 15 点    | 10 点    | 无限制   |
-| 货车 (vType=4)   | 100 点   | 100 点   | 无限制   |
 
-物资体积/重量点值映射：level=1（小件）→ 1 点、level=2（中件）→ 5 点、level=3（大件）→ 体积 40 点 / 重量 20 点。
 
-抢单时累加志愿者当前进行中任务（taskStatus = 1 或 2）的累计体重点值 + 新订单体重点值，超出载具上限即拒单。
+### 4.5 超时兜底（运力熔断）
+
+当 `deliveryMethod === 1`（志愿者配送）时启动倒计时（默认 30 秒）：若超时未抢单，自动调用 `switchOrderToPickup()` 将配送模式转为"居民自提"。管理员也可手动触发切为自提。
 
 ---
 
-## 项目不是 RPC 框架 / 微服务体系的说明
+## 五、HTTP 请求架构
 
-1. **非 RPC 框架**：项目中不存在 Zookeeper 服务注册中心、Dubbo RPC 调用、gRPC 协议栈或任何动态代理（Proxy/InvocationHandler）相关代码。所有远程调用均为 REST（高德地图 API 使用 Spring RestClient）和 RabbitMQ 异步消息。
+### 5.1 Axios 实例配置
 
-2. **非微服务体系**：项目为 Spring Boot 单体和应用，尽管采用 DDD 四层分包（common/config/module/websocket），但所有模块共享同一个进程空间和数据库连接池。未引入 Spring Cloud、Nacos、Sentinel、Zipkin/SkyWalking 等微服务治理或链路追踪组件。
+* `baseURL`: `http://localhost:8080/api`
+* `timeout`: 10 秒
+* **请求拦截器**：自动附加 Bearer Token（从 localStorage `ACCESS_TOKEN` 读取）
+* **响应拦截器**：
+* `code !== 200` → `ElMessage` 警告提示 + `Promise.reject`
+* HTTP 401 → 清除 Token 和 userRole → 强制跳转 `/auth` 登录页
+* 网络异常 → `ElMessage.error('网络异常，请检查后端是否启动')`
 
-3. **灾备 WebSocket 后端定位**：项目的实时通信基于 Jakarta WebSocket 原生实现（非 STOMP/Netty），适用于数百级并发连接的指挥中心大屏、志愿者 App 及商家终端的双向通知场景。若需扩展至万级并发，建议引入 Netty + RabbitMQ Fanout 广播的水平扩展方案。
+
+
+### 5.2 API 模块划分
+
+| API 模块 | 职责范围 |
+| --- | --- |
+| `auth.js` | 登录、注册、验证码 |
+| `user.js` | 个人资料、密码修改、成就看板、头像上传、管理员列表 |
+| `trade.js` | 订单发布/抢单/响应、任务执行/核销、流转查询、评价 |
+| `dispatch.js` | `smart-match` 智能派单、dashboard 大屏指标、紧急广播 |
+| `config.js` | 系统配置读写、模式切换、CSR 报告、切换预检 |
+| `admin.js` | 用户审核、站点管理、异常监控 |
+| `resource.js` | 物资捐赠发布、查询 |
+| `volunteer.js` | 信誉积分、志愿者榜单 |
+| `common.js` | 通用接口（文件上传等） |
+
+**入参规范**：
+
+* GET 请求 / 简单 POST → 使用 `params` 包装（拼接到 URL Query String）
+* JSON Body 传参 → 使用 `data` 包装
+* 响应统一解构 `res.data` 获取真实业务数据
 
 ---
 
-## 快速启动
+## 六、高德地图调度大屏
+
+### 6.1 初始化策略
+
+* **地图容器**：`#amap-container` 常驻 DOM
+* **骑手（Role 3）**：进大屏立即调用 `navigator.geolocation.getCurrentPosition()` 获取实时 GPS
+* **其他角色**：从数据库档案读取坐标，降级至 `GEO_FALLBACK`
+* **审核未通过或 GPS 获取失败**：展示锁屏遮罩，阻止地图渲染
+
+### 6.2 路径渲染引擎
+
+* 使用 `AMap.Riding` 骑行路径规划（`policy: 0`，推荐路线）
+* **双段路径分层渲染**：
+* 第一段（接驾段，A → B）：蓝色 `#3b82f6`，`zIndex: 60`
+* 第二段（履约段，B → C）：绿色 `#10b981`，`zIndex: 50`
+
+
+* **降级策略**：骑行路线规划失败时，虚线连接起终点
+* **路径 NaN 点过滤**：过滤掉所有非法坐标后绘制
+
+### 6.3 地图标注
+
+* `sos-pulse-marker`：红色脉动圆点（求助点）
+* `don-pulse-marker`：蓝色脉动圆点（捐赠商铺）
+* pill-style 文字标签：白色描边圆角胶囊（"我" / "取:XX" / "送:XX"）
+
+---
+
+## 七、全局事件总线体系
+
+系统使用 `window.dispatchEvent(CustomEvent)` 实现跨组件通信，不引入额外依赖：
+
+| 事件名 | 派发者 | 监听者（响应行为） |
+| --- | --- | --- |
+| `mode-changed` | `App.vue` (WS) | `SideMenu`、`ElderlySOS`、`dispatch`<br>
+
+<br>`FoodBankMarket`、`AlgorithmConfig`<br>
+
+<br>`MerchantDonate`、`EmergencyRadar` |
+| `audit-status-changed` | `App.vue` + `ProfileSetting` | `SideMenu`、`ElderlySOS`、`dispatch`<br>
+
+<br>`AdminReview`、`ProfileSetting` |
+| `user-info-updated` | `ProfileSetting` | `SideMenu`（同步 `deliveryType` 等） |
+| `refresh-orders` | `App.vue` (WS) | `OrderFlow`、`AdminReview`<br>
+
+<br>`MerchantHistory`、`FoodBankMarket`<br>
+
+<br>`dispatch/index` |
+
+**规范约束**：
+
+* 所有 `addEventListener` 必须在 `onUnmounted` 中 `removeEventListener`
+* 监听器必须提取为命名函数引用，禁止匿名函数
+* 不在多处修改同一状态 —— 保持 WebSocket 驱动的单一数据源
+
+---
+
+## 八、页面路由与功能矩阵
+
+| 路由路径 | 页面组件 | 允许角色 | 核心功能 |
+| --- | --- | --- | --- |
+| `/auth` | `Auth.vue` | 所有（公开） | 登录/注册 |
+| `/map` | `dispatch/index.vue` | 1,2,3,4 | 调度大屏 + 高德地图 |
+| `/sos` | `ElderlySOS.vue` | 1,4 | 紧急求助发布 + 追踪 |
+| `/market` | `FoodBankMarket.vue` | 1 | 食物银行自助提取 |
+| `/recipient/history` | `RecipientHistory.vue` | 1 | 受赠方历史求助档案 |
+| `/merchant/donate` | `MerchantDonate.vue` | 2 | 商家物资捐赠发布 |
+| `/merchant/history` | `MerchantHistory.vue` | 2 | 商家捐赠历史记录 |
+| `/merchant/radar` | `EmergencyRadar.vue` | 2 | 应急求助雷达响应 |
+| `/merchant/csr` | `MerchantCsr.vue` | 2 | CSR 社会责任看板 |
+| `/my-tasks` | `MyTasks.vue` | 3 | 骑手任务列表 |
+| `/volunteer/credit` | `CreditCenter.vue` | 2,3 | 志愿者信誉中心 |
+| `/volunteer/profile` | `ProfileSetting.vue` | 1,2,3,4 | 个人信息与凭证管理 |
+| `/admin/review` | `AdminReview.vue` | 4 | 用户资质审核 |
+| `/admin/users` | `UserManage.vue` | 4 | 用户管理 |
+| `/admin/stations` | `StationManage.vue` | 4 | 社区驿站管理 |
+| `/config` | `AlgorithmConfig.vue` | 4 | 算法权重调参引擎 |
+| `/flow` | `OrderFlow.vue` | 4 | 全局订单流转追踪 |
+| `/admin/exception-monitor` | `ExceptionMonitor.vue` | 4 | 异常预警大屏 |
+| `*` | `Auth.vue` (fallback) | - | 404 兜底 |
+
+---
+
+## 九、关键业务场景流程
+
+### 9.1 受赠方求助全链路
+
+受赠方打开 `ElderlySOS` → 选择物资大类 → 抽屉选择物资细类 → `ElMessageBox` 二次确认 → `publishDemand()` → WebSocket `NEW_SOS` 广播 → 调度大屏自动匹配 → 骑手抢单 → 商家备货（如是捐赠）→ 骑手取货 → 配送 → 送达 → 受赠方确认收货 → 评分 → 订单闭环
+
+### 9.2 捐赠物资流转全链路
+
+商家发布捐赠 → 管理员审核 → 物资入库社区驿站 → 受赠方求助 → SAW 算法匹配驿站 → 骑手去驿站取货 → 配送上门
+
+### 9.3 P2P 紧急直达全链路
+
+受赠方发布高紧急度求助 → 管理员触发周边商铺紧急广播 → 商家在 `EmergencyRadar` 中响应（填写物资）→ WebSocket `URGENT_TASK_READY` 推送骑手 → 骑手强制弹窗确认 → 直接前往商家取货 → P2P 直达求助市民
+
+### 9.4 模式切换全链路
+
+管理员在 `AlgorithmConfig` 或 `dispatch/index` 点击模式切换按钮 → `ElMessageBox` 确认 → `switchMode()` API → 后端更新 `sysMode` → 后端 WebSocket `MODE_CHANGED` → `App.vue` 解析广播 → `window.dispatchEvent('mode-changed')` → 全部页面联动更新：
+
+* `dispatch/index`：清空 pendingOrder/result + clearMap + fetchMapOrders
+* `ElderlySOS`：更新 urgency 映射 + 切换横幅文案 + 关闭/开启自提入口
+* `FoodBankMarket`：应急模式下强制跳转 `/sos`
+* `SideMenu`：更新菜单项可用性
+* `AlgorithmConfig`：同步 `form.sysMode` + 自动拉取新权重预设
+
+---
+
+## 十、构建与部署
+
+### 10.1 开发环境
 
 ```bash
-# 1. 启动基础设施
-docker-compose up -d
+npm run dev              # 启动 Vite 开发服务器（127.0.0.1:5173）
 
-# 2. 初始化数据库（自动执行 ./mysql/init/ 下的 SQL 脚本）
-
-# 3. 启动应用
-./mvnw spring-boot:run
-
-# 4. 访问 Swagger 文档
-# http://localhost:8080/api/swagger-ui.html
 ```
 
-**默认配置**：
+**环境变量（`.env.development`）**：
 
-- 服务端口：`8080`
-- 上下文路径：`/api`
-- WebSocket 端点：`ws://localhost:8080/api/ws/sos/{userId}`
-- JWT 密钥通过 `jwt.secret` 配置
+* `VITE_AMAP_KEY`: 高德地图 JSAPI Key
+* `VITE_AMAP_SECURITY_CODE`: 高德地图安全密钥（2.0 强制要求）
+
+### 10.2 生产构建
+
+```bash
+npm run build            # vue-tsc 类型检查 + vite build
+npm run preview          # 预览生产构建
+
+```
+
+### 10.3 后端依赖
+
+* 前端请求直连 `http://localhost:8080/api`（未使用 Vite 代理），需要后端 Java 服务在 8080 端口运行。
+* WebSocket 连接 `ws://localhost:8080/api/ws/sos/{userId}`。
 
 ---
 
-## 系统运行模式
+## 十一、项目目录结构
 
-| 模式      | 触发                | 权重特征                  | 行为差异                                               |
-| --------- | ------------------- | ------------------------- | ------------------------------------------------------ |
-| NORMAL    | 默认 / 手动切换     | wDist=0.50, wUrgency=0.20 | 距离优先，标签软匹配                                   |
-| EMERGENCY | 手动切换 / 灾备触发 | wDist=0.10, wUrgency=0.70 | 紧急度优先，开启异常监控，标签硬过滤，启用应急枢纽加成 |
+```text
+food-bank-frontend/
+├── index.html                        # HTML 入口
+├── package.json                      # 依赖与脚本
+├── vite.config.ts                    # Vite 构建配置（含 @ 别名）
+├── tsconfig.json / tsconfig.app.json # TypeScript 配置
+├── CLAUDE.md                         # 项目编码规范与行为准则
+├── .env.development                  # 开发环境变量
+├── public/                           # 静态资源（favicon 等）
+└── src/
+    ├── main.ts                       # 应用入口
+    ├── App.vue                       # 根组件（WebSocket + 全局布局）
+    ├── style.css                     # 全局样式
+    ├── vite-env.d.ts                 # Vite 类型声明
+    ├── router/
+    │   └── index.ts                  # 路由配置 + 权限守卫
+    ├── utils/
+    │   └── request.js                # Axios 实例 + 拦截器
+    ├── api/
+    │   ├── auth.js                   # 认证 API
+    │   ├── user.js                   # 用户 API
+    │   ├── trade.js                  # 订单/任务 API
+    │   ├── dispatch.js               # 调度 API
+    │   ├── config.js                 # 系统配置 API
+    │   ├── admin.js                  # 管理后台 API
+    │   ├── resource.js               # 物资/资源 API
+    │   ├── volunteer.js              # 志愿者 API
+    │   └── common.js                 # 通用 API
+    └── views/
+        ├── auth/Auth.vue             # 登录注册页
+        ├── dispatch/
+        │   ├── index.vue             # 调度大屏
+        │   └── components/
+        │       ├── SideMenu.vue      # 侧边导航菜单
+        │       ├── DashboardPanel.vue # 数据面板
+        │       └── DispatchControl.vue# 调度控制面板
+        ├── sos/
+        │   ├── ElderlySOS.vue        # 紧急求助工作台
+        │   ├── FoodBankMarket.vue    # 食物银行自助超市
+        │   └── RecipientHistory.vue  # 受赠方历史档案
+        ├── merchant/
+        │   ├── EmergencyRadar.vue    # 应急求助雷达
+        │   ├── MerchantHistory.vue   # 商家历史记录
+        │   └── MerchantCsr.vue       # CSR 社会责任看板
+        ├── resource/
+        │   └── MerchantDonate.vue    # 商家物资捐赠
+        ├── trade/
+        │   └── MyTasks.vue           # 骑手任务列表
+        ├── volunteer/
+        │   ├── ProfileSetting.vue    # 个人设置
+        │   └── CreditCenter.vue      # 信誉中心
+        └── admin/
+            ├── AdminReview.vue       # 用户审核
+            ├── AlgorithmConfig.vue   # 算法权重配置
+            ├── OrderFlow.vue         # 订单流转追踪
+            ├── UserManage.vue        # 用户管理
+            ├── StationManage.vue     # 驿站管理
+            └── ExceptionMonitor.vue  # 异常预警大屏
 
-运行模式通过 `ConfigController` 热切换，所有调度策略实时生效。
-
----
-
-## API 模块总览
-
-| 模块   | 路由前缀              | 职责                                           |
-| ------ | --------------------- | ---------------------------------------------- |
-| 认证   | `/auth`               | 注册、登录、短信验证码、找回密码、登出         |
-| 调度   | `/dispatch`           | 智能匹配、抢单、取货确认、紧急广播、商家轮询   |
-| 看板   | `/dispatch/dashboard` | 今日指标、分类库存占比、志愿者排行榜           |
-| 物资   | `/resource/goods`     | 捐赠入库、列表分页、库存校准、撤销             |
-| 驿站   | `/resource/station`   | 新增/更新据点、GEO 搜索、推荐排序              |
-| 订单   | `/trade/order`        | 待处理列表、SOS 响应、抢单大厅、异常监控、核销 |
-| 任务   | `/trade/task`         | 确认取货、核销送达、我的任务                   |
-| 用户   | `/system/user`        | 个人信息、资料更新、资质审核、大盘看板         |
-| 管理   | `/admin`              | 商家准入、全域用户管理、信誉分干预、账号清退   |
-| 商家   | `/merchant`           | CSR 战报（捐赠统计、受助人数、品类分布）       |
-| 志愿者 | `/volunteer/credit`   | 信誉分看板、荣誉等级、积分流水                 |
-| 配置   | `/system/config`      | SAW 权重热更新、模式切换、战备预检             |
-| 文件   | `/common/file`        | MinIO 图片上传                                 |
+```
